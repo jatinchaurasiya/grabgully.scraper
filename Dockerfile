@@ -54,7 +54,7 @@ WORKDIR /app
 
 # Install Playwright and download Chromium browser binaries
 # Version must match requirements.txt playwright pin
-RUN playwright install chromium --with-deps
+RUN playwright install chromium
 
 # Copy application source
 COPY . .
