@@ -46,9 +46,11 @@ class Settings(BaseSettings):
     amazon_client_secret: str = ""   # LWA Client Secret
     amazon_partner_tag: str = "grabgully-21"   # Associates tracking tag (keeps for affiliate URLs)
 
-    # ── CueLink Affiliate (Flipkart, Myntra, Meesho, Ajio, Snapdeal) ─────────
-    # Register at: https://cuelinks.com → API Section → Generate API Key
-    cuelink_api_key: str = ""        # Bearer token for CueLink short-link API
+    # ── CueLink (Android SDK) ─────────────────────────────────────────────────
+    # CueLink affiliate conversion is handled CLIENT-SIDE by the Android SDK.
+    # No API key needed on the backend. The Android app's AndroidManifest.xml
+    # must contain the CueLink Channel ID (com.cuelinks.channelId).
+    # See: https://cuelinks.com and the Cuelinks SDK Integration Guide v1.0.3
 
     # ── Firebase ──────────────────────────────────────────────────────────────
     firebase_project_id: str = ""
@@ -77,11 +79,6 @@ class Settings(BaseSettings):
     def amazon_configured(self) -> bool:
         """True when Amazon Creator API credentials are present."""
         return bool(self.amazon_client_id and self.amazon_client_secret)
-
-    @property
-    def cuelink_configured(self) -> bool:
-        """True when CueLink API key is present."""
-        return bool(self.cuelink_api_key)
 
 
 @lru_cache

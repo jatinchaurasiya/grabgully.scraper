@@ -8,13 +8,13 @@ Fetcher to render the page before parsing.
 
 Note: This is distinct from integrations/flipkart.py which was the old
 Flipkart Affiliate API integration. This scraper hits the public website
-and converts all links to CueLink affiliate URLs.
+and converts product URLs to raw clean URLs.
+The CueLink Android SDK handles affiliate conversion on the client side.
 
 Category URL pattern:
   https://www.flipkart.com/{category}?sort=popularity&page=1
 """
 from __future__ import annotations
-import asyncio
 import re
 
 from scrapling.auto import Fetcher
@@ -98,8 +98,7 @@ class FlipkartScraper(BaseScraper):
         products: list[ScrapedProduct] = []
         for card in cards:
             try:
-                # CueLink URL generation is async — await per card
-                product = await self._parse_product(card, category)
+                product = self._parse_product(card, category)
                 if product:
                     products.append(product)
             except Exception as e:
@@ -114,7 +113,7 @@ class FlipkartScraper(BaseScraper):
         )
         return products
 
-    async def _parse_product(self, card, category: str) -> ScrapedProduct | None:
+    def _parse_product(self, card, category: str) -> ScrapedProduct | None:
         # ── Product ID ─────────────────────────────────────────────────────
         product_id = card.attrib.get("data-id", "")
         if not product_id:
@@ -164,8 +163,8 @@ class FlipkartScraper(BaseScraper):
         if not product_url:
             return None
 
-        # ── CueLink Affiliate URL ──────────────────────────────────────────
-        affiliate_url = await build_flipkart_affiliate_url(product_url)
+        # Raw product URL — CueLink Android SDK affiliates client-side
+        affiliate_url = build_flipkart_affiliate_url(product_url)
 
         return ScrapedProduct(
             external_id    = product_id,

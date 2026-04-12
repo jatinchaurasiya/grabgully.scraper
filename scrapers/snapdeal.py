@@ -59,7 +59,7 @@ class SnapdealScraper(BaseScraper):
         products = []
         for item in items:
             try:
-                p = await self._parse_product(item, category)
+                p = self._parse_product(item, category)
                 if p:
                     products.append(p)
             except Exception:
@@ -67,7 +67,7 @@ class SnapdealScraper(BaseScraper):
 
         return products
 
-    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         title_el = item.css_first(".product-title") or item.css_first("p.product-title")
         title    = self.clean_title(title_el.text if title_el else "")
         if not title:
@@ -104,6 +104,6 @@ class SnapdealScraper(BaseScraper):
             current_price  = price,
             original_price = orig or price,
             discount_pct   = disc,
-            affiliate_url  = await build_snapdeal_affiliate_url(prod_url),
+            affiliate_url  = build_snapdeal_affiliate_url(prod_url),  # raw URL — CueLink SDK affiliates
             category       = category,
         )

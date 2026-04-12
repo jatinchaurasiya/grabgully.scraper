@@ -64,7 +64,7 @@ class MeeshoScraper(BaseScraper):
         products = []
         for item in items:
             try:
-                p = await self._parse_product(item, category)
+                p = self._parse_product(item, category)
                 if p:
                     products.append(p)
             except Exception:
@@ -72,7 +72,7 @@ class MeeshoScraper(BaseScraper):
 
         return products
 
-    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         # Title
         title_el = (
             item.css_first("p[class*='ProductTitle']")
@@ -109,7 +109,7 @@ class MeeshoScraper(BaseScraper):
         parts      = href.rstrip("/").split("/")
         product_id = parts[-1] if parts else href[:32]
 
-        affiliate_url = await build_meesho_affiliate_url(product_url)
+        affiliate_url = build_meesho_affiliate_url(product_url)  # raw URL — CueLink SDK affiliates
 
         return ScrapedProduct(
             external_id    = product_id or title[:20],

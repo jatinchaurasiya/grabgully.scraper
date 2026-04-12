@@ -62,7 +62,7 @@ class AjioScraper(BaseScraper):
         products = []
         for item in items:
             try:
-                p = await self._parse_product(item, category)
+                p = self._parse_product(item, category)
                 if p:
                     products.append(p)
             except Exception:
@@ -70,7 +70,7 @@ class AjioScraper(BaseScraper):
 
         return products
 
-    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         brand_el  = item.css_first(".brand")
         title_el  = item.css_first(".nameCls") or item.css_first("h2")
         brand     = self.clean_title(brand_el.text if brand_el else "")
@@ -110,6 +110,6 @@ class AjioScraper(BaseScraper):
             current_price  = sale_price,
             original_price = orig_price or sale_price,
             discount_pct   = discount,
-            affiliate_url  = await build_ajio_affiliate_url(url),
+            affiliate_url  = build_ajio_affiliate_url(url),  # raw URL — CueLink SDK affiliates
             category       = category,
         )

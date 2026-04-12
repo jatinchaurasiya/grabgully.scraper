@@ -72,7 +72,7 @@ class MyntraScraper(BaseScraper):
         products: list[ScrapedProduct] = []
         for item in items:
             try:
-                product = await self._parse_product(item, category)
+                product = self._parse_product(item, category)
                 if product:
                     products.append(product)
             except Exception as e:
@@ -81,7 +81,7 @@ class MyntraScraper(BaseScraper):
 
         return products
 
-    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         # Product ID
         product_id = (
             item.css_first(".product-productMetaInfo")
@@ -123,8 +123,8 @@ class MyntraScraper(BaseScraper):
         raw_url  = link_el.attrib.get("href", "") if link_el else ""
         product_url = self.safe_url(raw_url, MYNTRA_BASE)
 
-        # CueLink Affiliate URL
-        affiliate_url = await build_myntra_affiliate_url(product_url)
+        # Raw product URL — CueLink Android SDK affiliates client-side
+        affiliate_url = build_myntra_affiliate_url(product_url)
 
         return ScrapedProduct(
             external_id    = str(product_id),
