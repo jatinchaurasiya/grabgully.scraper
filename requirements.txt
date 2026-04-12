@@ -5,8 +5,9 @@ pydantic==2.7.1
 pydantic-settings==2.3.0
 
 # ─── SCRAPING ─────────────────────────────────────────────────────────────────
+# scrapling 0.2.9 requires playwright>=1.49.1 — must match
 scrapling==0.2.9
-playwright==1.44.0
+playwright==1.49.1
 httpx==0.27.0
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
@@ -19,8 +20,9 @@ upstash-ratelimit==1.0.0
 # ─── SCHEDULING ───────────────────────────────────────────────────────────────
 apscheduler==3.10.4
 
-# ─── AMAZON PA-API ────────────────────────────────────────────────────────────
-python-amazon-paapi==5.0.0
+# ─── AMAZON CREATOR API ───────────────────────────────────────────────────────
+# NOTE: python-amazon-paapi (PA-API 5.0) has been REMOVED.
+# We now use the Amazon Creator API via httpx (OAuth2 LWA) — no SDK needed.
 
 # ─── SECURITY ─────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
@@ -32,5 +34,4 @@ python-dotenv==1.0.1
 tenacity==8.3.0
 structlog==24.2.0
 prometheus-client==0.20.0
-httpx==0.27.0
 anyio==4.4.0
