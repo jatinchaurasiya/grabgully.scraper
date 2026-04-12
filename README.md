@@ -3,7 +3,9 @@
 **"Har Deal Ka Baap."**
 
 Production-grade Python scraper + FastAPI backend for the Grab Gully Android app.
-Scrapes Myntra, Meesho, Ajio, Snapdeal. Fetches live data from Amazon PA-API + Flipkart Affiliate API.
+Scrapes Myntra, Meesho, Ajio, Snapdeal, **Flipkart** via Scrapling + Playwright.
+Fetches live Amazon product data via the **Amazon Creator API** (Content Creator Program).
+All non-Amazon affiliate links generated via **CueLink**.
 Deployed on Railway. Zero paid infrastructure at launch.
 
 ---
@@ -17,10 +19,22 @@ Android App  ──HTTP──>  FastAPI (Railway)  ──reads──>  Supabase 
                               │
           ┌───────────────────┼───────────────────┐
           │                   │                   │
-    Scrapling             Amazon               Flipkart
-  (Myntra/Meesho/         PA-API 5.0          Affiliate API
-   Ajio/Snapdeal)
+    Scrapling             Amazon               CueLink
+  (Myntra/Meesho/        Creator API          Affiliate API
+   Ajio/Snapdeal/        (OAuth2 LWA)         (All platforms
+   Flipkart)              product data)        except Amazon)
 ```
+
+### Affiliate Strategy
+
+| Platform | Method | Notes |
+|---|---|---| 
+| Amazon | Direct Associates deep link | `amazon.in/dp/{ASIN}?tag=grabgully-21` |
+| Flipkart | CueLink short-link | Auto-tracked via CueLink |
+| Myntra | CueLink short-link | Auto-tracked via CueLink |
+| Meesho | CueLink short-link | Auto-tracked via CueLink |
+| Ajio | CueLink short-link | Auto-tracked via CueLink |
+| Snapdeal | CueLink short-link | Auto-tracked via CueLink |
 
 ---
 
@@ -32,7 +46,7 @@ Android App  ──HTTP──>  FastAPI (Railway)  ──reads──>  Supabase 
 
 ### 2. Setup
 ```bash
-git clone https://github.com/YOUR_ORG/grab-gully-scraper
+git clone https://github.com/jatinchaurasiya/grabgully.scraper
 cd grab-gully-scraper
 
 python -m venv .venv
@@ -69,7 +83,7 @@ Visit: http://localhost:8000/health
 1. Push this repo to GitHub (private repo)
 2. railway.app → New Project → Deploy from GitHub repo
 3. Select this repo → Railway detects Dockerfile → Deploy
-4. Settings → Variables → Add all vars from .env.example
+4. Settings → Variables → Add all vars from `.env.example`
 5. Settings → Networking → Generate Domain
 6. Test: `curl https://your-app.railway.app/health`
 
@@ -82,13 +96,45 @@ Visit: http://localhost:8000/health
 | `SUPABASE_SERVICE_KEY` | Supabase → Settings → Service Role Key |
 | `UPSTASH_REDIS_URL` | Upstash Console → REST URL |
 | `UPSTASH_REDIS_TOKEN` | Upstash Console → REST Token |
-| `AMAZON_ACCESS_KEY` | Amazon Associates → Tools → PA-API |
-| `AMAZON_SECRET_KEY` | Amazon PA-API setup |
-| `AMAZON_PARTNER_TAG` | Your Amazon affiliate tag (e.g. `grabgully-21`) |
-| `FLIPKART_AFFILIATE_TOKEN` | Flipkart Affiliate Dashboard |
+| `AMAZON_CLIENT_ID` | Amazon Creator Program → LWA Security Profile |
+| `AMAZON_CLIENT_SECRET` | Amazon Creator Program → LWA Security Profile |
+| `AMAZON_PARTNER_TAG` | Your Amazon Associates tracking ID (e.g. `grabgully-21`) |
+| `CUELINK_API_KEY` | CueLink Dashboard → API Section → Generate Key |
 | `FIREBASE_PROJECT_ID` | Firebase Console → Project Settings |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase → Service Accounts → Generate Key (minify JSON) |
 | `ALLOWED_ORIGINS` | `https://grabgully.com,https://admin.grabgully.com` |
+
+---
+
+## Third-Party Integrations
+
+### Amazon Creator API (Content Creator Program)
+Replaces the old PA-API 5.0. Uses **OAuth2 LWA (Login with Amazon)** — no complex
+AWS Signature V4 signing required.
+
+1. Join: https://affiliate.amazon.in → Tools → Creator API
+2. Create an LWA Security Profile → get `AMAZON_CLIENT_ID` + `AMAZON_CLIENT_SECRET`
+3. Tokens are auto-refreshed by the service before expiry.
+
+### CueLink Affiliate API
+Single integration to generate tracked affiliate links for Flipkart, Myntra, Meesho,
+Ajio, and Snapdeal. CueLink auto-detects the merchant from the URL.
+
+1. Register: https://cuelinks.com
+2. Join merchant programs for each platform inside the CueLink dashboard
+3. Go to: Dashboard → API Section → Generate API Key → set `CUELINK_API_KEY`
+
+---
+
+## Scrapers
+
+| Scraper | File | Method |
+|---|---|---|
+| Flipkart | `scrapers/flipkart.py` | Scrapling + Playwright (headless) |
+| Myntra | `scrapers/myntra.py` | Scrapling + Playwright (headless) |
+| Meesho | `scrapers/meesho.py` | Scrapling + Playwright (headless) |
+| Ajio | `scrapers/ajio.py` | Scrapling + Playwright (headless) |
+| Snapdeal | `scrapers/snapdeal.py` | Scrapling lite (SSR-friendly) |
 
 ---
 
@@ -140,12 +186,12 @@ Visit: http://localhost:8000/health
 
 | Job | Schedule | Purpose |
 |---|---|---|
-| Platform scrapers | Every 30 min, 6AM–11PM | Myntra, Meesho, Ajio, Snapdeal |
-| API integrations | :15 and :45 past hour, 6AM–11PM | Amazon PA-API + Flipkart API |
+| Platform scrapers | Every 30 min, 6AM–11PM | Flipkart, Myntra, Meesho, Ajio, Snapdeal |
+| Amazon Creator API | :15 and :45 past hour, 6AM–11PM | Search + deals refresh |
 | Price alerts | Every 15 min | Watchlist target price checks + FCM push |
 | Data cleanup | Daily 2:00 AM | Delete price_history > 1 year old |
 
-> **Railway credit tip**: Scraper only runs 6AM–11PM IST (17 hours/day).  
+> **Railway credit tip**: Scraper only runs 6AM–11PM IST (17 hours/day).
 > Estimated Railway credit usage: ~$3/month on free $5 plan.
 
 ---

@@ -4,6 +4,7 @@ scrapers/myntra.py
 Myntra product scraper using Scrapling + Playwright.
 Myntra is a JS-heavy SPA — we need a headless browser.
 
+Affiliate links are generated via CueLink (build_myntra_affiliate_url).
 Category URL format: https://www.myntra.com/{category}?rawQuery={category}&sort=popularity
 """
 from __future__ import annotations
@@ -71,7 +72,7 @@ class MyntraScraper(BaseScraper):
         products: list[ScrapedProduct] = []
         for item in items:
             try:
-                product = self._parse_product(item, category)
+                product = await self._parse_product(item, category)
                 if product:
                     products.append(product)
             except Exception as e:
@@ -80,7 +81,7 @@ class MyntraScraper(BaseScraper):
 
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         # Product ID
         product_id = (
             item.css_first(".product-productMetaInfo")
@@ -122,8 +123,8 @@ class MyntraScraper(BaseScraper):
         raw_url  = link_el.attrib.get("href", "") if link_el else ""
         product_url = self.safe_url(raw_url, MYNTRA_BASE)
 
-        # Affiliate URL
-        affiliate_url = build_myntra_affiliate_url(product_url)
+        # CueLink Affiliate URL
+        affiliate_url = await build_myntra_affiliate_url(product_url)
 
         return ScrapedProduct(
             external_id    = str(product_id),

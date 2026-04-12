@@ -40,16 +40,15 @@ class Settings(BaseSettings):
     upstash_redis_url: str
     upstash_redis_token: str
 
-    # ── Amazon PA-API ─────────────────────────────────────────────────────────
-    amazon_access_key: str = ""
-    amazon_secret_key: str = ""
-    amazon_partner_tag: str = "grabgully-21"
-    amazon_host: str = "webservices.amazon.in"
-    amazon_region: str = "us-east-1"
+    # ── Amazon Creator API (replaces PA-API 5.0) ──────────────────────────────
+    # Register at: https://affiliate.amazon.in → Tools → Creator API
+    amazon_client_id: str = ""       # LWA (Login with Amazon) Client ID
+    amazon_client_secret: str = ""   # LWA Client Secret
+    amazon_partner_tag: str = "grabgully-21"   # Associates tracking tag (keeps for affiliate URLs)
 
-    # ── Flipkart ──────────────────────────────────────────────────────────────
-    flipkart_affiliate_id: str = ""
-    flipkart_affiliate_token: str = ""
+    # ── CueLink Affiliate (Flipkart, Myntra, Meesho, Ajio, Snapdeal) ─────────
+    # Register at: https://cuelinks.com → API Section → Generate API Key
+    cuelink_api_key: str = ""        # Bearer token for CueLink short-link API
 
     # ── Firebase ──────────────────────────────────────────────────────────────
     firebase_project_id: str = ""
@@ -76,11 +75,13 @@ class Settings(BaseSettings):
 
     @property
     def amazon_configured(self) -> bool:
-        return bool(self.amazon_access_key and self.amazon_secret_key)
+        """True when Amazon Creator API credentials are present."""
+        return bool(self.amazon_client_id and self.amazon_client_secret)
 
     @property
-    def flipkart_configured(self) -> bool:
-        return bool(self.flipkart_affiliate_token)
+    def cuelink_configured(self) -> bool:
+        """True when CueLink API key is present."""
+        return bool(self.cuelink_api_key)
 
 
 @lru_cache

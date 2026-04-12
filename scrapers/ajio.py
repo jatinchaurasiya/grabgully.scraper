@@ -3,6 +3,7 @@ scrapers/ajio.py
 ────────────────
 Ajio scraper — Reliance's fashion platform.
 Uses Scrapling + Playwright for JS-rendered pages.
+Affiliate links are generated via CueLink (build_ajio_affiliate_url).
 """
 from __future__ import annotations
 from scrapling.auto import Fetcher
@@ -61,7 +62,7 @@ class AjioScraper(BaseScraper):
         products = []
         for item in items:
             try:
-                p = self._parse_product(item, category)
+                p = await self._parse_product(item, category)
                 if p:
                     products.append(p)
             except Exception:
@@ -69,7 +70,7 @@ class AjioScraper(BaseScraper):
 
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         brand_el  = item.css_first(".brand")
         title_el  = item.css_first(".nameCls") or item.css_first("h2")
         brand     = self.clean_title(brand_el.text if brand_el else "")
@@ -109,6 +110,6 @@ class AjioScraper(BaseScraper):
             current_price  = sale_price,
             original_price = orig_price or sale_price,
             discount_pct   = discount,
-            affiliate_url  = build_ajio_affiliate_url(url),
+            affiliate_url  = await build_ajio_affiliate_url(url),
             category       = category,
         )

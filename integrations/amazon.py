@@ -1,22 +1,20 @@
 """
 integrations/amazon.py
 ───────────────────────
-Amazon Product Advertising API 5.0 wrapper.
-PA-API gives real-time prices + product data — no scraping needed for Amazon.
-Rate limit: 1 request/second per credentials pair.
-We cache every response for 15 minutes to stay within limits.
+Amazon Creator API (Content Creator API) wrapper.
+This replaces the PA-API 5.0. Creator API gives access to product search
+and deal data via an OAuth2 bearer token (no AWS Signature V4 required).
 
-Sign up: https://affiliate.amazon.in → Tools → Product Advertising API
+Sign up: https://affiliate.amazon.in → Tools → Creator API (Content Creator)
+Docs:    https://webservices.amazon.com/paapi5/documentation (Creator endpoints)
+
+Rate limits: 1 request/second per credentials pair.
+All responses are cached for 15 minutes.
 """
 from __future__ import annotations
 import asyncio
 import hashlib
-import hmac
-import json
-import time
-from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import quote
 
 import httpx
 
@@ -29,83 +27,69 @@ from services.cache import get_cache, TTL_DEALS
 
 log = get_logger("amazon")
 
-PAAPI_HOST   = "webservices.amazon.in"
-PAAPI_REGION = "us-east-1"
-PAAPI_PATH   = "/paapi5/searchitems"
+# Amazon Creator API base (India marketplace)
+CREATOR_API_BASE    = "https://affiliate-program.amazon.in/creatorAPI"
+CREATOR_TOKEN_URL   = "https://api.amazon.in/auth/o2/token"
 
-# Amazon category → Browse Node IDs (India)
-BROWSE_NODES = {
-    "smartphones":  "1389401031",
-    "laptops":      "1375424031",
-    "earphones":    "1388921031",
-    "headphones":   "1388921031",
-    "smartwatches": "1350387031",
-    "tablets":      "1375429031",
-    "cameras":      "1389378031",
-    "televisions":  "1389396031",
-    "books":        "976389031",
-    "kitchen":      "4430354031",
-    "sports":       "3401328031",
-}
+# Product-search endpoint (Creator API v1)
+SEARCH_PATH         = "/products/search"
+DEALS_PATH          = "/products/deals"
 
 
-class AmazonPAAPI:
+class AmazonCreatorAPI:
     """
-    Amazon PA-API 5.0 client using manual AWS Signature V4.
-    Does NOT use the official SDK (adds 50MB+ of deps).
+    Amazon Creator API client using OAuth2 Bearer Token (LWA — Login with Amazon).
+    Much simpler than PA-API 5.0 — no AWS Signature V4 needed.
+
+    Prerequisites:
+    - AMAZON_CLIENT_ID      → From Amazon Associates / Creator Program dashboard
+    - AMAZON_CLIENT_SECRET  → Same dashboard
+    - AMAZON_PARTNER_TAG    → Your Associates tracking ID (e.g. grabgully-21)
     """
 
     def __init__(self):
-        s = get_settings()
-        self.access_key   = s.amazon_access_key
-        self.secret_key   = s.amazon_secret_key
-        self.partner_tag  = s.amazon_partner_tag
-        self.host         = s.amazon_host or PAAPI_HOST
-        self.region       = s.amazon_region or PAAPI_REGION
-        self._semaphore   = asyncio.Semaphore(1)   # Max 1 concurrent PA-API call
-        self._last_call   = 0.0                    # Timestamp of last API call
+        s = self._s = get_settings()
+        self.client_id      = s.amazon_client_id
+        self.client_secret  = s.amazon_client_secret
+        self.partner_tag    = s.amazon_partner_tag
+        self._access_token: Optional[str]  = None
+        self._token_expiry: float          = 0.0
+        self._semaphore = asyncio.Semaphore(1)    # 1 concurrent call max
+        self._last_call = 0.0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    async def search_items(
+    async def search_products(
         self,
         keywords: str,
-        category: str = "All",
+        category: str = "",
         count: int = 20,
     ) -> list[ScrapedProduct]:
-        """Search Amazon for products by keyword. Returns list of ScrapedProduct."""
-        if not self.access_key:
-            log.warning("amazon_paapi_not_configured")
+        """
+        Search Amazon India for products by keyword via Creator API.
+        Returns list of ScrapedProduct (empty list if API not configured).
+        """
+        if not self.client_id or not self.client_secret:
+            log.warning("amazon_creator_api_not_configured")
             return []
 
         cache = get_cache()
-        cache_key = f"amz:search:{hashlib.md5(keywords.encode()).hexdigest()}"
+        cache_key = f"amz:creator:search:{hashlib.md5(keywords.encode()).hexdigest()}"
         cached = await cache.get(cache_key)
         if cached:
             log.debug("amazon_cache_hit", keywords=keywords)
             return [ScrapedProduct(**p) for p in cached]
 
-        payload = {
-            "Keywords":     keywords,
-            "Resources":    [
-                "Images.Primary.Large",
-                "ItemInfo.Title",
-                "ItemInfo.ByLineInfo",
-                "Offers.Listings.Price",
-                "Offers.Listings.SavingBasis",
-                "Offers.Listings.DeliveryInfo.IsFreeShippingEligible",
-                "Offers.Summaries.LowestPrice",
-                "BrowseNodeInfo.BrowseNodes",
-            ],
-            "SearchIndex":  category,
-            "ItemCount":    min(count, 10),   # PA-API max is 10 per call
-            "PartnerTag":   self.partner_tag,
-            "PartnerType":  "Associates",
-            "Marketplace":  "www.amazon.in",
+        params = {
+            "keywords":      keywords,
+            "tag":           self.partner_tag,
+            "maxResults":    min(count, 20),
         }
+        if category:
+            params["category"] = category
 
         try:
-            data = await self._signed_request(PAAPI_PATH, payload)
+            data     = await self._request("GET", SEARCH_PATH, params=params)
             products = self._parse_search_response(data)
             if products:
                 await cache.set(cache_key, [p.model_dump() for p in products], TTL_DEALS)
@@ -116,94 +100,69 @@ class AmazonPAAPI:
             log.error("amazon_search_failed", keywords=keywords, error=str(e))
             return []
 
-    async def get_items(self, asins: list[str]) -> list[ScrapedProduct]:
-        """Fetch specific items by ASIN. Used for price refresh on watchlist items."""
-        if not asins or not self.access_key:
+    async def get_deals(self, count: int = 20) -> list[ScrapedProduct]:
+        """
+        Fetch current Amazon deals / lightning deals via the Creator API.
+        These are curated deals shown on amazon.in/deals.
+        """
+        if not self.client_id or not self.client_secret:
             return []
 
-        payload = {
-            "ItemIds":    asins[:10],   # max 10 per call
-            "Resources":  [
-                "Images.Primary.Large",
-                "ItemInfo.Title",
-                "ItemInfo.ByLineInfo",
-                "Offers.Listings.Price",
-                "Offers.Listings.SavingBasis",
-            ],
-            "PartnerTag":  self.partner_tag,
-            "PartnerType": "Associates",
-            "Marketplace": "www.amazon.in",
-        }
+        cache = get_cache()
+        cache_key = "amz:creator:deals"
+        cached = await cache.get(cache_key)
+        if cached:
+            return [ScrapedProduct(**p) for p in cached]
 
+        params = {"tag": self.partner_tag, "maxResults": min(count, 20)}
         try:
-            data = await self._signed_request("/paapi5/getitems", payload)
-            return self._parse_items_response(data)
+            data     = await self._request("GET", DEALS_PATH, params=params)
+            products = self._parse_search_response(data)
+            if products:
+                await cache.set(cache_key, [p.model_dump() for p in products], TTL_DEALS)
+            return products
         except Exception as e:
-            log.error("amazon_getitems_failed", asins=asins, error=str(e))
+            log.error("amazon_deals_failed", error=str(e))
             return []
 
-    # ── Parsers ───────────────────────────────────────────────────────────────
+    # ── Response Parsers ──────────────────────────────────────────────────────
 
     def _parse_search_response(self, data: dict) -> list[ScrapedProduct]:
+        """Parse Creator API search/deals response into ScrapedProduct list."""
         items = (
-            data.get("SearchResult", {})
-                .get("Items", [])
+            data.get("products", [])
+            or data.get("items", [])
+            or data.get("results", [])
         )
-        return [p for p in (self._parse_item(i) for i in items) if p]
-
-    def _parse_items_response(self, data: dict) -> list[ScrapedProduct]:
-        items = data.get("ItemsResult", {}).get("Items", [])
         return [p for p in (self._parse_item(i) for i in items) if p]
 
     def _parse_item(self, item: dict) -> Optional[ScrapedProduct]:
         try:
-            asin      = item.get("ASIN", "")
+            asin  = item.get("asin", "") or item.get("id", "")
             if not asin:
                 return None
 
-            # Title
-            title = (
-                item.get("ItemInfo", {})
-                    .get("Title", {})
-                    .get("DisplayValue", "")
-            )
+            title = item.get("title", "") or item.get("name", "")
             if not title:
                 return None
 
-            # Brand
-            brand = (
-                item.get("ItemInfo", {})
-                    .get("ByLineInfo", {})
-                    .get("Brand", {})
-                    .get("DisplayValue", "")
-            )
-
-            # Image
+            brand     = item.get("brand", "") or item.get("brandName", "")
             image_url = (
-                item.get("Images", {})
-                    .get("Primary", {})
-                    .get("Large", {})
-                    .get("URL", "")
+                item.get("imageUrl", "")
+                or item.get("image", {}).get("large", "")
+                or item.get("image", {}).get("medium", "")
             )
 
-            # Price
-            listings = (
-                item.get("Offers", {})
-                    .get("Listings", [])
-            )
-            current_price  = 0.0
-            original_price = 0.0
-
-            if listings:
-                listing = listings[0]
-                current_price = float(
-                    listing.get("Price", {})
-                           .get("Amount", 0) or 0
-                )
-                original_price = float(
-                    listing.get("SavingBasis", {})
-                           .get("Amount", 0) or current_price
-                )
+            # Creator API may return price as float or nested dict
+            price_info     = item.get("price", {})
+            if isinstance(price_info, dict):
+                current_price  = float(price_info.get("amount", 0) or 0)
+                original_price = float((
+                    price_info.get("mrp") or price_info.get("originalAmount") or current_price
+                ))
+            else:
+                current_price  = float(price_info or 0)
+                original_price = float(item.get("mrp") or current_price)
 
             if current_price <= 0:
                 return None
@@ -215,119 +174,100 @@ class AmazonPAAPI:
             return ScrapedProduct(
                 external_id    = asin,
                 platform       = Platform.AMAZON,
-                title          = title,
+                title          = title.strip(),
                 brand          = brand,
                 image_url      = image_url,
                 current_price  = current_price,
                 original_price = original_price,
                 discount_pct   = discount,
                 affiliate_url  = build_amazon_affiliate_url(asin),
-                category       = "",
+                category       = item.get("category", ""),
+                rating         = float(item.get("rating", 0) or 0),
+                rating_count   = int(item.get("ratingCount", 0) or 0),
             )
         except Exception as e:
             log.debug("amazon_item_parse_error", error=str(e))
             return None
 
-    # ── AWS Signature V4 ──────────────────────────────────────────────────────
+    # ── OAuth2 Token (LWA) ────────────────────────────────────────────────────
 
-    async def _signed_request(self, path: str, payload: dict) -> dict:
+    async def _get_token(self) -> str:
         """
-        Make an AWS Signature V4 signed request to PA-API.
-        Enforces 1 req/sec rate limit via semaphore + sleep.
+        Fetch or refresh the LWA (Login with Amazon) OAuth2 access token.
+        Tokens are cached until expiry with a 60-second safety margin.
         """
+        import time
+        if self._access_token and time.monotonic() < self._token_expiry:
+            return self._access_token
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                CREATOR_TOKEN_URL,
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     self.client_id,
+                    "client_secret": self.client_secret,
+                    "scope":         "advertising::creator:read",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
+        if r.status_code == 401:
+            raise AffiliateAPIError("Amazon Creator API: invalid credentials (401)")
+        if r.status_code != 200:
+            raise AffiliateAPIError(
+                f"Amazon Creator API token error {r.status_code}: {r.text[:200]}"
+            )
+
+        payload             = r.json()
+        self._access_token  = payload["access_token"]
+        self._token_expiry  = time.monotonic() + payload.get("expires_in", 3600) - 60
+        log.debug("amazon_token_refreshed")
+        return self._access_token
+
+    # ── HTTP Helper  ──────────────────────────────────────────────────────────
+
+    async def _request(self, method: str, path: str, params: dict | None = None) -> dict:
+        """Rate-limited HTTP call to Creator API with Bearer auth."""
+        import time
         async with self._semaphore:
-            # Polite 1 req/sec rate limit
             elapsed = time.monotonic() - self._last_call
             if elapsed < 1.0:
                 await asyncio.sleep(1.0 - elapsed)
 
-            headers = self._build_headers(path, payload)
-            url = f"https://{self.host}{path}"
+            token = await self._get_token()
+            url   = f"{CREATOR_API_BASE}{path}"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept":        "application/json",
+            }
 
             async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    url,
-                    json=payload,
-                    headers=headers,
+                r = await client.request(
+                    method, url, params=params, headers=headers
                 )
-                self._last_call = time.monotonic()
+            self._last_call = time.monotonic()
 
-                if r.status_code == 429:
-                    raise AffiliateAPIError("Amazon PA-API rate limited (429)")
-                if r.status_code == 403:
-                    raise AffiliateAPIError("Amazon PA-API auth failed — check credentials")
-                if r.status_code != 200:
-                    raise AffiliateAPIError(f"Amazon PA-API error {r.status_code}: {r.text[:200]}")
-
-                return r.json()
-
-    def _build_headers(self, path: str, payload: dict) -> dict:
-        """Build AWS Signature V4 signed headers."""
-        body          = json.dumps(payload, separators=(",", ":"))
-        body_hash     = hashlib.sha256(body.encode()).hexdigest()
-        now           = datetime.now(timezone.utc)
-        amz_date      = now.strftime("%Y%m%dT%H%M%SZ")
-        date_stamp    = now.strftime("%Y%m%d")
-        service       = "ProductAdvertisingAPI"
-        target        = "com.amazon.paapi5.v1.ProductAdvertisingAPIv1.SearchItems"
-        if "getitems" in path:
-            target = "com.amazon.paapi5.v1.ProductAdvertisingAPIv1.GetItems"
-
-        canonical_headers = (
-            f"content-encoding:amz-1.0\n"
-            f"content-type:application/json; charset=utf-8\n"
-            f"host:{self.host}\n"
-            f"x-amz-date:{amz_date}\n"
-            f"x-amz-target:{target}\n"
-        )
-        signed_headers = "content-encoding;content-type;host;x-amz-date;x-amz-target"
-
-        canonical_request = "\n".join([
-            "POST", path, "",
-            canonical_headers, signed_headers, body_hash
-        ])
-
-        credential_scope = f"{date_stamp}/{self.region}/{service}/aws4_request"
-        string_to_sign   = "\n".join([
-            "AWS4-HMAC-SHA256", amz_date, credential_scope,
-            hashlib.sha256(canonical_request.encode()).hexdigest()
-        ])
-
-        def _sign(key: bytes, msg: str) -> bytes:
-            return hmac.new(key, msg.encode(), hashlib.sha256).digest()
-
-        signing_key = _sign(
-            _sign(
-                _sign(
-                    _sign(f"AWS4{self.secret_key}".encode(), date_stamp),
-                    self.region
-                ),
-                service
-            ),
-            "aws4_request"
-        )
-        signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
-        auth_header = (
-            f"AWS4-HMAC-SHA256 Credential={self.access_key}/{credential_scope}, "
-            f"SignedHeaders={signed_headers}, Signature={signature}"
-        )
-
-        return {
-            "Content-Encoding": "amz-1.0",
-            "Content-Type":     "application/json; charset=utf-8",
-            "Host":             self.host,
-            "X-Amz-Date":       amz_date,
-            "X-Amz-Target":     target,
-            "Authorization":    auth_header,
-        }
+            if r.status_code == 429:
+                raise AffiliateAPIError("Amazon Creator API: rate limited (429)")
+            if r.status_code == 401:
+                # Token may have expired mid-flight — clear and let caller retry
+                self._access_token = None
+                raise AffiliateAPIError("Amazon Creator API: unauthorized (401)")
+            if r.status_code != 200:
+                raise AffiliateAPIError(
+                    f"Amazon Creator API error {r.status_code}: {r.text[:200]}"
+                )
+            return r.json()
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
-_amazon: Optional[AmazonPAAPI] = None
+_amazon: Optional[AmazonCreatorAPI] = None
 
-def get_amazon() -> AmazonPAAPI:
+
+def get_amazon() -> AmazonCreatorAPI:
+    """Return the module-level singleton AmazonCreatorAPI instance."""
     global _amazon
     if _amazon is None:
-        _amazon = AmazonPAAPI()
+        _amazon = AmazonCreatorAPI()
     return _amazon

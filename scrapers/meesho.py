@@ -2,6 +2,7 @@
 scrapers/meesho.py
 ──────────────────
 Meesho scraper. Meesho is React-based — uses Scrapling with Playwright.
+Affiliate links are generated via CueLink (build_meesho_affiliate_url).
 Category URLs follow: https://meesho.com/search?q={keyword}&page=1
 """
 from __future__ import annotations
@@ -63,7 +64,7 @@ class MeeshoScraper(BaseScraper):
         products = []
         for item in items:
             try:
-                p = self._parse_product(item, category)
+                p = await self._parse_product(item, category)
                 if p:
                     products.append(p)
             except Exception:
@@ -71,7 +72,7 @@ class MeeshoScraper(BaseScraper):
 
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
+    async def _parse_product(self, item, category: str) -> ScrapedProduct | None:
         # Title
         title_el = (
             item.css_first("p[class*='ProductTitle']")
@@ -108,7 +109,7 @@ class MeeshoScraper(BaseScraper):
         parts      = href.rstrip("/").split("/")
         product_id = parts[-1] if parts else href[:32]
 
-        affiliate_url = build_meesho_affiliate_url(product_url)
+        affiliate_url = await build_meesho_affiliate_url(product_url)
 
         return ScrapedProduct(
             external_id    = product_id or title[:20],
