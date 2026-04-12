@@ -29,6 +29,7 @@ logs/
 Thumbs.db
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/settings.json   # Keep interpreter/pyright settings tracked
 .idea/
 *.swp

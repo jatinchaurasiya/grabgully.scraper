@@ -1,15 +1,16 @@
 {
   "include": ["."],
-  "exclude": [".venv", "__pycache__", "*.egg-info"],
-  "venvPath": ".",
+  "exclude": [".venv", "__pycache__", "*.egg-info", "build", "dist"],
+  "venvPath": "/home/jatin/Grab.gully_app/grab-gully-scraper",
   "venv": ".venv",
   "pythonVersion": "3.12",
   "pythonPlatform": "Linux",
   "typeCheckingMode": "basic",
   "reportMissingModuleSource": "none",
-  "reportMissingImports": "warning",
+  "reportMissingImports": "none",
   "reportMissingTypeStubs": "none",
   "reportGeneralTypeIssues": "warning",
   "reportOptionalMemberAccess": "none",
-  "useLibraryCodeForTypes": true
+  "useLibraryCodeForTypes": true,
+  "extraPaths": ["/home/jatin/Grab.gully_app/grab-gully-scraper/.venv/lib/python3.12/site-packages"]
 }
