@@ -18,7 +18,6 @@ class Platform(str, Enum):
     MEESHO   = "meesho"
     AJIO     = "ajio"
     SNAPDEAL = "snapdeal"
-    NYKAA    = "nykaa"
 
 
 class Category(str, Enum):
@@ -99,14 +98,6 @@ class PricePoint(BaseModel):
     scraped_at: datetime
 
 
-class CompareResult(BaseModel):
-    product_id:   str
-    title:        str
-    image_url:    str
-    listings:     list[PlatformPrice]
-    cheapest:     Optional[PlatformPrice] = None
-
-
 class PlatformPrice(BaseModel):
     platform:      str
     current_price: float
@@ -115,6 +106,14 @@ class PlatformPrice(BaseModel):
     affiliate_url: str
     in_stock:      bool
     last_updated:  datetime
+
+
+class CompareResult(BaseModel):
+    product_id:   str
+    title:        str
+    image_url:    str
+    listings:     list[PlatformPrice]
+    cheapest:     Optional[PlatformPrice] = None
 
 
 # ── Internal Scheduler Models ─────────────────────────────────────────────────

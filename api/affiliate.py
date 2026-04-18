@@ -22,7 +22,7 @@ from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import RedirectResponse
 
 from core.logger import get_logger
-from services.db import get_db, log_affiliate_click
+from services.db import get_db, log_affiliate_click, award_xp
 from services.cache import get_cache
 
 router = APIRouter(tags=["affiliate"])
@@ -95,7 +95,12 @@ async def affiliate_redirect(
     # 5. Award XP (non-blocking)
     if user_id:
         try:
-            await _award_xp(user_id, "affiliate_click", listing_id)
+            await award_xp(
+                user_id=user_id,
+                action_type="affiliate_click",
+                xp=5,
+                metadata={"listing_id": listing_id},
+            )
         except Exception:
             pass   # XP failure must never block the redirect
 
@@ -121,6 +126,7 @@ def _get_client_ip(request: Request) -> str:
 async def _extract_user_id(authorization: Optional[str]) -> Optional[str]:
     """
     Validate Supabase JWT and return user_id.
+    Verifies HS256 signature using SUPABASE_JWT_SECRET.
     Returns None for unauthenticated requests (anonymous users).
     """
     if not authorization or not authorization.startswith("Bearer "):
@@ -129,37 +135,15 @@ async def _extract_user_id(authorization: Optional[str]) -> Optional[str]:
     try:
         from jose import jwt, JWTError
         from core.config import get_settings
-        # Supabase JWT secret is the anon key's JWT secret
-        # We decode without verifying signature here (Supabase handles auth)
-        # In production, verify with your Supabase JWT secret
-        payload = jwt.decode(token, options={"verify_signature": False})
+        s = get_settings()
+        payload = jwt.decode(
+            token,
+            s.supabase_jwt_secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},  # Supabase uses aud="authenticated"
+        )
         return payload.get("sub")   # Supabase user UUID
     except Exception:
         return None
 
 
-async def _award_xp(user_id: str, action: str, ref_id: str) -> None:
-    """Award XP to user for qualifying affiliate click."""
-    XP_MAP = {
-        "affiliate_click": 5,
-        "affiliate_purchase": 100,
-    }
-    xp = XP_MAP.get(action, 0)
-    if xp <= 0:
-        return
-
-    db = get_db()
-    try:
-        # Insert XP event
-        db.table("xp_events").insert({
-            "user_id":    user_id,
-            "action_type": action,
-            "xp_amount":  xp,
-            "metadata":   {"listing_id": ref_id},
-        }).execute()
-
-        # Increment user XP (use Supabase RPC for atomic update)
-        db.rpc("increment_user_xp", {"p_user_id": user_id, "p_xp": xp}).execute()
-
-    except Exception as e:
-        log.warning("xp_award_failed", user_id=user_id, action=action, error=str(e))

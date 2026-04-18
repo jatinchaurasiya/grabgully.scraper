@@ -2,7 +2,8 @@
 core/config.py
 ──────────────
 Single source of truth for all environment variables.
-Pydantic-settings validates types at startup — crash early if misconfigured.
+Pydantic-settings validates and type-checks every value at startup.
+The app crashes immediately if a required variable is missing — fail fast.
 """
 from functools import lru_cache
 from typing import List
@@ -19,57 +20,85 @@ class Settings(BaseSettings):
     )
 
     # ── App ───────────────────────────────────────────────────────────────────
-    app_env: str = "production"
+    app_env:     str = "production"
     app_version: str = "2.0.0"
-    log_level: str = "INFO"
-    port: int = 8000
+    log_level:   str = "INFO"
+    port:        int = 8000
+    notification_icon_color: str = "#C9A84C"   # GoldPrimary — override in .env if branding changes
 
     # ── Security ──────────────────────────────────────────────────────────────
+    # SCRAPER_SECRET protects the /admin/* endpoints.
+    # Generate it with: python -c "import secrets; print(secrets.token_hex(32))"
     scraper_secret: str
-    allowed_origins: str = "https://grabgully.com"
+
+    # ALLOWED_ORIGINS: who can call this API.
+    # For a mobile app (Android) CORS is not enforced by the OS — but set it
+    # to your Railway URL so browser-based admin tools are restricted.
+    # Format: comma-separated URLs, no trailing slash.
+    # If you have no domain yet, use your Railway URL:
+    #   e.g. https://grab-gully-scraper.up.railway.app
+    # For local dev you can set: http://localhost:3000
+    # REQUIRED — no default. App fails fast at startup if unset.
+    # Format: comma-separated URLs, no trailing slash.
+    # Example: https://grab-gully-scraper.up.railway.app
+    # For local dev: http://localhost:3000
+    allowed_origins: str
 
     @property
     def origins_list(self) -> List[str]:
-        return [o.strip() for o in self.allowed_origins.split(",")]
+        if self.allowed_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     # ── Supabase ──────────────────────────────────────────────────────────────
-    supabase_url: str
-    supabase_service_key: str
+    supabase_url:         str   # https://xxxx.supabase.co
+    supabase_service_key: str   # Service role key — NEVER the anon key
+    supabase_jwt_secret:  str   # Supabase Dashboard → Settings → API → JWT Secret
 
-    # ── Redis ─────────────────────────────────────────────────────────────────
-    upstash_redis_url: str
+    # ── Redis (Upstash) ───────────────────────────────────────────────────────
+    upstash_redis_url:   str
     upstash_redis_token: str
 
-    # ── Amazon Creator API (replaces PA-API 5.0) ──────────────────────────────
-    # Register at: https://affiliate.amazon.in → Tools → Creator API
-    amazon_client_id: str = ""       # LWA (Login with Amazon) Client ID
-    amazon_client_secret: str = ""   # LWA Client Secret
-    amazon_partner_tag: str = "grabgully-21"   # Associates tracking tag (keeps for affiliate URLs)
+    # ── Amazon Creator API (OAuth2 LWA) ───────────────────────────────────────
+    # Replaces PA-API 5.0. Register at affiliate.amazon.in → Tools → Creator API.
+    amazon_client_id:     str = ""
+    amazon_client_secret: str = ""
+    amazon_partner_tag:   str = "grabgully-21"   # Your Associates tracking ID
 
-    # ── CueLink (Android SDK) ─────────────────────────────────────────────────
-    # CueLink affiliate conversion is handled CLIENT-SIDE by the Android SDK.
-    # No API key needed on the backend. The Android app's AndroidManifest.xml
-    # must contain the CueLink Channel ID (com.cuelinks.channelId).
-    # See: https://cuelinks.com and the Cuelinks SDK Integration Guide v1.0.3
+    # ── CueLink (Android SDK — no backend key needed) ─────────────────────────
+    # CueLink affiliate conversion happens CLIENT-SIDE in the Android app.
+    # The CueLink Channel ID lives in AndroidManifest.xml of the Android project.
+    # Nothing to configure here on the backend.
 
-    # ── Firebase ──────────────────────────────────────────────────────────────
-    firebase_project_id: str = ""
-    firebase_service_account_json: str = "{}"
+    # ── Firebase (FCM push notifications) ────────────────────────────────────
+    # firebase_project_id: Your Firebase project ID (e.g. grab-gully-android)
+    # firebase_service_account_json: The full JSON content from the service account
+    #   key file, on a SINGLE LINE with all inner quotes escaped.
+    #   See .env.example for step-by-step instructions.
+    firebase_project_id:              str = ""
+    firebase_service_account_json:    str = "{}"
 
     # ── Scraper Behaviour ─────────────────────────────────────────────────────
-    scrape_interval_minutes: int = 30
-    scrape_start_hour: int = 6
-    scrape_end_hour: int = 23
-    request_delay_seconds: float = 4.0
-    max_products_per_category: int = 50
-    price_drop_check_interval_minutes: int = 15
+    scrape_interval_minutes:          int   = 30
+    scrape_start_hour:                int   = 6
+    scrape_end_hour:                  int   = 23
+    request_delay_seconds:            float = 4.0
+    max_products_per_category:        int   = 50
+    price_drop_check_interval_minutes: int  = 15
+
+    # ── Validators ────────────────────────────────────────────────────────────
 
     @field_validator("scraper_secret")
     @classmethod
     def secret_must_be_strong(cls, v: str) -> str:
         if len(v) < 32:
-            raise ValueError("SCRAPER_SECRET must be at least 32 characters")
+            raise ValueError(
+                "SCRAPER_SECRET must be at least 32 characters. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
         return v
+
+    # ── Computed properties ───────────────────────────────────────────────────
 
     @property
     def is_production(self) -> bool:
@@ -77,11 +106,18 @@ class Settings(BaseSettings):
 
     @property
     def amazon_configured(self) -> bool:
-        """True when Amazon Creator API credentials are present."""
+        """True only when both Creator API credentials are present."""
         return bool(self.amazon_client_id and self.amazon_client_secret)
+
+    @property
+    def firebase_configured(self) -> bool:
+        return bool(
+            self.firebase_project_id
+            and self.firebase_service_account_json not in ("{}", "")
+        )
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached settings — reads env once, reused everywhere."""
+    """Cached singleton — environment is read once at first call."""
     return Settings()

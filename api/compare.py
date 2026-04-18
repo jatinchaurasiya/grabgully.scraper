@@ -7,10 +7,11 @@ Given a product ID, returns prices from all platforms + 90-day history.
 from __future__ import annotations
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from pydantic import BaseModel
 
 from core.logger import get_logger
+from core.limiter import limiter
 from services.db import get_db
 from services.cache import get_cache, TTL_COMPARE, TTL_PRICE_HISTORY
 
@@ -45,7 +46,8 @@ class PriceHistoryPoint(BaseModel):
 
 
 @router.get("/{listing_id}", response_model=CompareResponse)
-async def compare_prices(listing_id: str):
+@limiter.limit("60/minute")
+async def compare_prices(request: Request, listing_id: str):
     """
     Main compare endpoint. Given any listing_id, fetches:
     - All platform prices for the same product
@@ -181,44 +183,35 @@ async def price_history(
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 async def _get_24h_drop(listing_id: str) -> Optional[float]:
-    """Compare current price with price from ~24h ago. Returns drop amount or None."""
+    """
+    Compare earliest vs latest price in a 26h window.
+    Single DB query — fetches first and last price_history row together.
+
+    26h window (not 24h) gives headroom for scrape timing jitter
+    so prices scraped at 11:58 PM are still caught at 00:02 AM next day.
+    """
     db = get_db()
     try:
         from datetime import datetime, timedelta, timezone
-        yesterday = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
-        ago_24h   = (datetime.now(timezone.utc) - timedelta(hours=23)).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(hours=26)).isoformat()
 
-        # Price ~24h ago
-        old_res = (
+        res = (
             db.table("price_history")
-            .select("price")
+            .select("price, scraped_at")
             .eq("listing_id", listing_id)
-            .gte("scraped_at", yesterday)
-            .lte("scraped_at", ago_24h)
+            .gte("scraped_at", since)
             .order("scraped_at", desc=False)
-            .limit(1)
+            .limit(2)
             .execute()
         )
-        # Current price
-        now_res = (
-            db.table("price_history")
-            .select("price")
-            .eq("listing_id", listing_id)
-            .order("scraped_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-
-        old_data = old_res.data
-        now_data = now_res.data
-
-        if not old_data or not now_data:
+        rows = res.data or []
+        if len(rows) < 2:
             return None
 
-        old_price = float(old_data[0]["price"])
-        new_price = float(now_data[0]["price"])
+        old_price = float(rows[0]["price"])
+        new_price = float(rows[-1]["price"])
         drop = old_price - new_price
-
         return round(drop, 2) if drop > 0 else None
     except Exception:
         return None
+

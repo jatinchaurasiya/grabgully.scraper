@@ -1,14 +1,13 @@
 """
 core/scheduler.py
 ──────────────────
-APScheduler setup. All cron jobs defined here — one place to see
-the full scraping schedule.
+APScheduler setup. All cron jobs in one place.
 
-Schedule (IST timezone, 6 AM–11 PM only to save Railway credits):
-  Every 30 min  → run_all_scrapers()    — scrape Myntra, Meesho, Ajio, Snapdeal
-  Every 30 min  → run_api_integrations() — refresh Amazon + Flipkart via API
-  Every 15 min  → check_price_drops()   — fire FCM alerts for watchlist hits
-  Daily 2 AM    → cleanup_old_history() — delete price_history older than 1 year
+Schedule (IST, 6 AM–11 PM only — saves Railway free credits):
+  Every 30 min, :00 & :30  → _run_scrapers()         Myntra/Meesho/Ajio/Snapdeal/Flipkart
+  Every 30 min, :15 & :45  → _run_amazon_creator()   Amazon Creator API refresh
+  Every 15 min              → _run_price_check()      FCM alerts for watchlist hits
+  Daily at 2:00 AM          → _cleanup_old_data()     Delete price_history > 1 year
 """
 from __future__ import annotations
 import asyncio
@@ -23,7 +22,7 @@ from core.logger import get_logger
 
 log = get_logger("scheduler")
 
-# Category list scraped on every run
+# ── Categories scraped on every run ──────────────────────────────────────────
 SCRAPE_CATEGORIES = [
     "smartphones",
     "earphones",
@@ -37,7 +36,7 @@ SCRAPE_CATEGORIES = [
     "tshirts",
 ]
 
-# Amazon keyword searches (PA-API)
+# Amazon Creator API search keywords
 AMAZON_KEYWORDS = [
     "smartphones under 15000",
     "truly wireless earbuds",
@@ -54,7 +53,7 @@ def create_scheduler() -> AsyncIOScheduler:
     s = get_settings()
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
-    # Scraper cron: every 30 min between start_hour and end_hour IST
+    # ── All platform scrapers: every 30 min ──────────────────────────────────
     scheduler.add_job(
         _run_scrapers,
         CronTrigger(
@@ -63,39 +62,39 @@ def create_scheduler() -> AsyncIOScheduler:
             timezone="Asia/Kolkata",
         ),
         id="scrapers",
-        name="Platform Scrapers",
-        max_instances=1,   # Never run two scrape jobs simultaneously
-        coalesce=True,
-        misfire_grace_time=300,
-    )
-
-    # Amazon + Flipkart API refresh: every 30 min
-    scheduler.add_job(
-        _run_api_integrations,
-        CronTrigger(
-            hour=f"{s.scrape_start_hour}-{s.scrape_end_hour}",
-            minute="15,45",   # Offset from scrapers to spread load
-            timezone="Asia/Kolkata",
-        ),
-        id="api_integrations",
-        name="Amazon + Flipkart API",
+        name="Platform Scrapers (Scrapling)",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,
     )
 
-    # Price drop alerts: every 15 min
+    # ── Amazon Creator API: offset by 15 min so it never clashes with scrapers
+    scheduler.add_job(
+        _run_amazon_creator,
+        CronTrigger(
+            hour=f"{s.scrape_start_hour}-{s.scrape_end_hour}",
+            minute="15,45",
+            timezone="Asia/Kolkata",
+        ),
+        id="amazon_creator",
+        name="Amazon Creator API",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+    )
+
+    # ── Price drop alerts: every 15 min ─────────────────────────────────────
     scheduler.add_job(
         _run_price_check,
         CronTrigger(minute="*/15", timezone="Asia/Kolkata"),
         id="price_alerts",
-        name="Price Drop Alerts",
+        name="Price Drop Alerts (FCM)",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
     )
 
-    # Daily cleanup at 2 AM IST
+    # ── Daily cleanup at 2 AM IST ────────────────────────────────────────────
     scheduler.add_job(
         _cleanup_old_data,
         CronTrigger(hour=2, minute=0, timezone="Asia/Kolkata"),
@@ -107,40 +106,45 @@ def create_scheduler() -> AsyncIOScheduler:
     return scheduler
 
 
-# ── Job implementations ───────────────────────────────────────────────────────
+# ── Job: Platform Scrapers ────────────────────────────────────────────────────
 
 async def _run_scrapers() -> None:
-    """Run all platform scrapers sequentially with delays."""
-    from scrapers import MyntraScraper, MeeshoScraper, AjioScraper, SnapdealScraper
-    from services.db import upsert_listings_bulk, record_price_history, log_scraper_run
+    """
+    Run all platform scrapers (Scrapling + Playwright).
+    Runs sequentially with polite delays between platforms.
+    Includes Flipkart — now scraped directly, not via API.
+    """
+    from scrapers import (
+        MyntraScraper, MeeshoScraper, AjioScraper,
+        SnapdealScraper, FlipkartScraper,
+    )
+    from services.db import upsert_listings_bulk, log_scraper_run
 
     scrapers = [
+        FlipkartScraper(),
         MyntraScraper(),
         MeeshoScraper(),
         AjioScraper(),
         SnapdealScraper(),
     ]
 
-    total = 0
-    for scraper in scrapers:
+    async def run_one(scraper) -> int:
+        """Run a single scraper with its own error boundary."""
         start = time.monotonic()
         try:
             products = await scraper.run(SCRAPE_CATEGORIES)
             count    = await upsert_listings_bulk(products)
             duration = time.monotonic() - start
-            total   += count
-
             await log_scraper_run(
-                platform       = scraper.platform.value,
-                category       = "all",
-                products_found = count,
+                platform         = scraper.platform.value,
+                category         = "all",
+                products_found   = count,
                 duration_seconds = duration,
-                status         = "success",
+                status           = "success",
             )
-            log.info("scraper_done",
-                     platform=scraper.platform.value,
-                     products=count, duration=round(duration, 1))
-
+            log.info("scraper_done", platform=scraper.platform.value,
+                     products=count, duration_s=round(duration, 1))
+            return count
         except Exception as e:
             duration = time.monotonic() - start
             await log_scraper_run(
@@ -151,63 +155,73 @@ async def _run_scrapers() -> None:
                 status           = "failed",
                 error            = str(e)[:500],
             )
-            log.error("scraper_failed",
-                      platform=scraper.platform.value, error=str(e))
+            log.error("scraper_failed", platform=scraper.platform.value, error=str(e))
+            return 0
 
-        # Respectful delay between platforms
-        await asyncio.sleep(get_settings().request_delay_seconds * 2)
+    # Run all scrapers concurrently — each gets its own Playwright thread
+    # (backed by the 5-worker ThreadPoolExecutor in scrapers/base.py).
+    # return_exceptions=False: exceptions are caught inside run_one, so
+    # gather itself will never raise.
+    results = await asyncio.gather(
+        *[run_one(s) for s in scrapers],
+        return_exceptions=False,
+    )
+    log.info("all_scrapers_done", total_products=sum(results))
 
-    log.info("all_scrapers_done", total_products=total)
 
+# ── Job: Amazon Creator API ───────────────────────────────────────────────────
 
-async def _run_api_integrations() -> None:
-    """Fetch live data from Amazon PA-API and Flipkart Affiliate API."""
+async def _run_amazon_creator() -> None:
+    """
+    Fetch live Amazon product data via the Amazon Creator API (OAuth2 LWA).
+    Only runs when AMAZON_CLIENT_ID + AMAZON_CLIENT_SECRET are configured.
+    """
     from integrations.amazon import get_amazon
-    from integrations.flipkart import get_flipkart
     from services.db import upsert_listings_bulk
 
     s = get_settings()
+    if not s.amazon_configured:
+        log.debug("amazon_creator_skip", reason="not configured — skipping")
+        return
 
-    # Amazon
-    if s.amazon_configured:
-        all_products = []
-        for keyword in AMAZON_KEYWORDS:
-            try:
-                products = await get_amazon().search_items(keyword, count=10)
-                all_products.extend(products)
-                await asyncio.sleep(1.1)   # PA-API: max 1 req/sec
-            except Exception as e:
-                log.warning("amazon_keyword_failed", keyword=keyword, error=str(e))
+    all_products = []
+    amazon = get_amazon()
 
-        if all_products:
-            count = await upsert_listings_bulk(all_products)
-            log.info("amazon_done", products=count)
+    # Search products by keyword
+    for keyword in AMAZON_KEYWORDS:
+        try:
+            products = await amazon.search_products(keyword, count=10)
+            all_products.extend(products)
+            await asyncio.sleep(1.1)   # Creator API: max ~1 req/sec
+        except Exception as e:
+            log.warning("amazon_keyword_failed", keyword=keyword, error=str(e))
 
-    # Flipkart
-    if s.flipkart_configured:
-        fk_products = []
-        for keyword in AMAZON_KEYWORDS[:5]:   # Fewer FK queries
-            try:
-                products = await get_flipkart().search_products(keyword, count=10)
-                fk_products.extend(products)
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                log.warning("flipkart_keyword_failed", keyword=keyword, error=str(e))
+    # Also pull current deals
+    try:
+        deals = await amazon.get_deals(count=20)
+        all_products.extend(deals)
+    except Exception as e:
+        log.warning("amazon_deals_failed", error=str(e))
 
-        if fk_products:
-            count = await upsert_listings_bulk(fk_products)
-            log.info("flipkart_done", products=count)
+    if all_products:
+        count = await upsert_listings_bulk(all_products)
+        log.info("amazon_creator_done", products=count)
 
+
+# ── Job: Price Drop Alerts ────────────────────────────────────────────────────
 
 async def _run_price_check() -> None:
+    """Check watchlist target prices and fire FCM push notifications."""
     from services.price_tracker import check_price_drops
     fired = await check_price_drops()
     if fired:
         log.info("price_alerts_fired", count=fired)
 
 
+# ── Job: Daily Cleanup ────────────────────────────────────────────────────────
+
 async def _cleanup_old_data() -> None:
-    """Delete price_history older than 365 days to keep DB lean."""
+    """Delete price_history rows older than 365 days to keep DB lean."""
     from services.db import get_db
     from datetime import timedelta
     db = get_db()

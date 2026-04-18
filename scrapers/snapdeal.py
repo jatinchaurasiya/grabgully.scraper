@@ -1,13 +1,12 @@
 """
 scrapers/snapdeal.py
 ────────────────────
-Snapdeal scraper — lower-ticket electronics and fashion.
-Snapdeal uses server-side rendering, so Scrapling's lightweight fetcher
-works without full Playwright in many cases.
-Affiliate links are generated via CueLink (build_snapdeal_affiliate_url).
+Snapdeal scraper — Scrapling 0.4.5 + StealthyFetcher.
+Snapdeal has some server-side rendering but still needs a browser for JS.
 """
 from __future__ import annotations
-from scrapling.auto import Fetcher
+from scrapling.fetchers.stealth_chrome import StealthyFetcher
+
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
 from scrapers.base import BaseScraper
@@ -31,22 +30,25 @@ CATEGORY_MAP = {
 class SnapdealScraper(BaseScraper):
     platform = Platform.SNAPDEAL
 
-    async def scrape_category(self, category: str) -> list[ScrapedProduct]:
+    def scrape_category(self, category: str) -> list[ScrapedProduct]:
         slug = CATEGORY_MAP.get(category, category)
         url  = (
             f"{SNAPDEAL_BASE}/products/{slug}"
             f"?sort=rlvncy&rating=3&discount=10&q={category}"
         )
-
         self._log.info("scraping", platform="snapdeal", url=url)
 
         try:
-            # Try lightweight fetch first (Snapdeal has some SSR)
-            fetcher = Fetcher(auto_match=False, stealth=True)
-            page = fetcher.get(url, stealthy_headers=True, wait_timeout=15000)
+            page = StealthyFetcher.fetch(
+                url,
+                headless=True,
+                wait_selector=".product-tuple-listing",
+                timeout=20000,
+                disable_resources=True,
+            )
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "blocked" in err_str:
+            err = str(e).lower()
+            if "429" in err or "blocked" in err:
                 raise ScraperRateLimited("snapdeal", "blocked")
             raise ScraperError("snapdeal", str(e))
 
@@ -56,44 +58,47 @@ class SnapdealScraper(BaseScraper):
             if not items:
                 raise ScraperStructureChanged("snapdeal", "product listing selector not found")
 
-        products = []
+        products: list[ScrapedProduct] = []
         for item in items:
             try:
-                p = self._parse_product(item, category)
+                p = self._parse(item, category)
                 if p:
                     products.append(p)
             except Exception:
                 continue
-
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
-        title_el = item.css_first(".product-title") or item.css_first("p.product-title")
-        title    = self.clean_title(title_el.text if title_el else "")
+    def _parse(self, item, category: str) -> ScrapedProduct | None:
+        title_el = (
+            self.css_first(item, ".product-title")
+            or self.css_first(item, "p.product-title")
+        )
+        title = self.clean_title(title_el.text if title_el else "")
         if not title:
             return None
 
-        price_el = item.css_first(".product-price")
+        price_el = self.css_first(item, ".product-price")
         price    = self.extract_price(price_el.text if price_el else "")
         if price <= 0:
             return None
 
-        orig_el  = item.css_first(".product-desc-price.strike")
+        orig_el  = self.css_first(item, ".product-desc-price.strike")
         orig     = self.extract_price(orig_el.text if orig_el else "")
 
-        disc_el  = item.css_first(".product-discount span")
+        disc_el  = self.css_first(item, ".product-discount span")
         disc     = self.extract_int(disc_el.text if disc_el else "")
 
-        img_el   = item.css_first("img.product-image")
+        img_el   = self.css_first(item, "img.product-image") or self.css_first(item, "img")
         img_url  = img_el.attrib.get("src", "") if img_el else ""
 
-        link_el  = item.css_first("a.dp-widget-link")
+        link_el  = self.css_first(item, "a.dp-widget-link") or self.css_first(item, "a")
         href     = link_el.attrib.get("href", "") if link_el else ""
         prod_url = self.safe_url(href, SNAPDEAL_BASE)
 
-        # Snapdeal product IDs appear in URL as /product/{name}/{id}
         parts    = href.rstrip("/").split("/")
-        prod_id  = parts[-1] if parts and parts[-1].isdigit() else href[:32]
+        prod_id  = parts[-1] if (parts and parts[-1].isdigit()) else href[:32]
+        if not prod_id:
+            prod_id = title[:24].replace(" ", "_")
 
         return ScrapedProduct(
             external_id    = prod_id,
@@ -104,6 +109,6 @@ class SnapdealScraper(BaseScraper):
             current_price  = price,
             original_price = orig or price,
             discount_pct   = disc,
-            affiliate_url  = build_snapdeal_affiliate_url(prod_url),  # raw URL — CueLink SDK affiliates
+            affiliate_url  = build_snapdeal_affiliate_url(prod_url),
             category       = category,
         )

@@ -1,12 +1,12 @@
 """
 scrapers/meesho.py
 ──────────────────
-Meesho scraper. Meesho is React-based — uses Scrapling with Playwright.
-Affiliate links are generated via CueLink (build_meesho_affiliate_url).
-Category URLs follow: https://meesho.com/search?q={keyword}&page=1
+Meesho scraper — Scrapling 0.4.5 + StealthyFetcher.
+Meesho is React-based; headless browser needed.
 """
 from __future__ import annotations
-from scrapling.auto import Fetcher
+from scrapling.fetchers.stealth_chrome import StealthyFetcher
+
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
 from scrapers.base import BaseScraper
@@ -15,110 +15,107 @@ from integrations.affiliate import build_meesho_affiliate_url
 MEESHO_BASE = "https://meesho.com"
 
 CATEGORY_MAP = {
-    "kurta":        "kurta for women",
-    "saree":        "sarees",
-    "jeans":        "women jeans",
-    "tshirts":      "men tshirts",
-    "sneakers":     "sneakers",
-    "bags":         "women handbags",
-    "earphones":    "earphones",
-    "watches":      "wrist watches",
-    "bedsheets":    "double bedsheets",
-    "kitchenware":  "kitchen utensils",
+    "kurta":       "kurta for women",
+    "saree":       "sarees",
+    "jeans":       "women jeans",
+    "tshirts":     "men tshirts",
+    "sneakers":    "sneakers",
+    "bags":        "women handbags",
+    "earphones":   "earphones",
+    "watches":     "wrist watches",
+    "bedsheets":   "double bedsheets",
+    "kitchen":     "kitchen utensils",
 }
 
 
 class MeeshoScraper(BaseScraper):
     platform = Platform.MEESHO
 
-    async def scrape_category(self, category: str) -> list[ScrapedProduct]:
+    def scrape_category(self, category: str) -> list[ScrapedProduct]:
         query = CATEGORY_MAP.get(category, category)
         url   = f"{MEESHO_BASE}/search?q={query.replace(' ', '+')}&page=1"
-
         self._log.info("scraping", platform="meesho", url=url)
 
         try:
-            fetcher = Fetcher(auto_match=True, stealth=True)
-            page = fetcher.get(
+            page = StealthyFetcher.fetch(
                 url,
-                stealthy_headers=True,
+                headless=True,
                 wait_selector="[data-testid='product-card']",
-                wait_timeout=15000,
+                timeout=20000,
+                disable_resources=True,
             )
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "too many" in err_str:
+            err = str(e).lower()
+            if "429" in err or "too many" in err:
                 raise ScraperRateLimited("meesho", "rate limited")
             raise ScraperError("meesho", str(e))
 
-        if "robot" in page.html.lower() or "captcha" in page.html.lower():
+        html_lower = page.html.lower() if page.html else ""
+        if "robot" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("meesho", "CAPTCHA detected")
 
         items = page.css("[data-testid='product-card']")
         if not items:
-            # Try fallback selector
             items = page.css(".NewProductCard__CardStyled")
             if not items:
                 raise ScraperStructureChanged("meesho", "product card selector not found")
 
-        products = []
+        products: list[ScrapedProduct] = []
         for item in items:
             try:
-                p = self._parse_product(item, category)
+                p = self._parse(item, category)
                 if p:
                     products.append(p)
             except Exception:
                 continue
-
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
-        # Title
+    def _parse(self, item, category: str) -> ScrapedProduct | None:
         title_el = (
-            item.css_first("p[class*='ProductTitle']")
-            or item.css_first("[data-testid='product-title']")
-            or item.css_first("h5")
+            self.css_first(item, "p[class*='ProductTitle']")
+            or self.css_first(item, "[data-testid='product-title']")
+            or self.css_first(item, "h5")
         )
         title = self.clean_title(title_el.text if title_el else "")
         if not title:
             return None
 
-        # Price — Meesho shows "₹299" format
         price_el = (
-            item.css_first("p[class*='DiscountedPrice']")
-            or item.css_first("[data-testid='price']")
-            or item.css_first("span[class*='price']")
+            self.css_first(item, "p[class*='DiscountedPrice']")
+            or self.css_first(item, "[data-testid='price']")
+            or self.css_first(item, "span[class*='price']")
         )
         price = self.extract_price(price_el.text if price_el else "")
         if price <= 0:
             return None
 
-        orig_el  = item.css_first("p[class*='OriginalPrice']")
+        orig_el    = self.css_first(item, "p[class*='OriginalPrice']")
         orig_price = self.extract_price(orig_el.text if orig_el else "")
 
-        # Image
-        img_el = item.css_first("img")
+        img_el    = self.css_first(item, "img")
         image_url = img_el.attrib.get("src", "") if img_el else ""
 
-        # Link
-        link_el = item.css_first("a")
-        href    = link_el.attrib.get("href", "") if link_el else ""
-        product_url = self.safe_url(href, MEESHO_BASE)
+        link_el   = self.css_first(item, "a")
+        href      = link_el.attrib.get("href", "") if link_el else ""
+        prod_url  = self.safe_url(href, MEESHO_BASE)
 
-        # Product ID from URL (e.g. /product-name/123456789)
-        parts      = href.rstrip("/").split("/")
-        product_id = parts[-1] if parts else href[:32]
-
-        affiliate_url = build_meesho_affiliate_url(product_url)  # raw URL — CueLink SDK affiliates
+        # Extract the stable numeric product ID from the URL.
+        # Meesho URLs: /product-name-slug/123456789
+        # The slug changes on promotions; the trailing numeric ID is stable.
+        import re
+        numeric_ids = re.findall(r'\d{6,}', href)   # 6+ digit numbers in the URL
+        prod_id     = numeric_ids[-1] if numeric_ids else ""
+        if not prod_id:
+            prod_id = title[:24].replace(" ", "_")
 
         return ScrapedProduct(
-            external_id    = product_id or title[:20],
+            external_id    = prod_id,
             platform       = Platform.MEESHO,
             title          = title,
             brand          = "",
             image_url      = image_url,
             current_price  = price,
             original_price = orig_price or price,
-            affiliate_url  = affiliate_url,
+            affiliate_url  = build_meesho_affiliate_url(prod_url),
             category       = category,
         )

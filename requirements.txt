@@ -5,33 +5,33 @@ pydantic==2.7.1
 pydantic-settings==2.3.0
 
 # ─── SCRAPING ─────────────────────────────────────────────────────────────────
-# scrapling 0.2.9 requires playwright>=1.49.1 — must match
-scrapling==0.2.9
+# Scrapling 0.4.5 is installed in venv — pin requirements to match
+scrapling==0.4.5
 playwright==1.49.1
 httpx==0.27.0
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
 supabase==2.5.0
 
-# ─── CACHING & RATE LIMITING ──────────────────────────────────────────────────
-redis==5.0.4
-upstash-ratelimit==1.0.0
+# ─── CACHING ─────────────────────────────────────────────────────────────────
+# Cache uses httpx (listed above under scraping) to call Upstash REST API directly.
 
 # ─── SCHEDULING ───────────────────────────────────────────────────────────────
 apscheduler==3.10.4
 
 # ─── AMAZON CREATOR API ───────────────────────────────────────────────────────
-# NOTE: python-amazon-paapi (PA-API 5.0) has been REMOVED.
-# We now use the Amazon Creator API via httpx (OAuth2 LWA) — no SDK needed.
+# Uses httpx (already listed above) + python-jose for JWT.
+# No external SDK needed — OAuth2 Bearer Token via REST.
 
 # ─── SECURITY ─────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 slowapi==0.1.9
 
-# ─── UTILITIES ────────────────────────────────────────────────────────────────
+# ─── UTILITIES ─────────────────────────────────────────────────────────────────
 python-dotenv==1.0.1
-tenacity==8.3.0
 structlog==24.2.0
 prometheus-client==0.20.0
-anyio==4.4.0
+
+# ─── TESTING ──────────────────────────────────────────────────────────────────
+# httpx is already listed above (FastAPI TestClient uses it automatically)
+pytest==8.2.0

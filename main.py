@@ -26,6 +26,9 @@ from core.config import get_settings
 from core.logger import setup_logging, get_logger
 from core.scheduler import create_scheduler
 from api import deals, search, compare, affiliate, watchlist
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from core.limiter import limiter
 
 # ── Bootstrap logging before anything else ────────────────────────────────────
 setup_logging()
@@ -58,7 +61,7 @@ async def lifespan(app: FastAPI):
         version=s.app_version,
         env=s.app_env,
         amazon_ready=s.amazon_configured,
-        flipkart_ready=s.flipkart_configured,
+        cuelink_sdk="handled_client_side_android",
     )
 
     _scheduler = create_scheduler()
@@ -96,6 +99,10 @@ app.add_middleware(
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# Rate limiting — uses the singleton from core/limiter.py
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.middleware("http")
@@ -194,21 +201,24 @@ async def health():
         "db":            "ok" if db_ok else "error",
         "scheduler":     "running" if scheduler_ok else "stopped",
         "amazon_api":    "configured" if settings.amazon_configured else "not_configured",
-        "flipkart_api":  "configured" if settings.flipkart_configured else "not_configured",
+        "flipkart": "scrapling_scraper",
+        "cuelink": "android_sdk_client_side",
     }
 
 
 @app.get("/metrics", tags=["system"])
-async def metrics():
-    """Prometheus metrics endpoint."""
+async def metrics(_: str = Depends(verify_admin)):
+    """Prometheus metrics endpoint — requires SCRAPER_SECRET bearer token."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ── Admin-only endpoints ──────────────────────────────────────────────────────
 
 @app.post("/admin/trigger-scrape", tags=["admin"])
-async def trigger_scrape(_: str = Depends(verify_admin)):
+async def trigger_scrape(request: Request, _: str = Depends(verify_admin)):
     """Manually trigger a full scrape run. Requires SCRAPER_SECRET header."""
+    log.warning("admin_action", endpoint=request.url.path,
+                client_ip=request.client.host if request.client else "unknown")
     import asyncio
     from core.scheduler import _run_scrapers
     asyncio.create_task(_run_scrapers())
@@ -216,8 +226,10 @@ async def trigger_scrape(_: str = Depends(verify_admin)):
 
 
 @app.post("/admin/trigger-price-check", tags=["admin"])
-async def trigger_price_check(_: str = Depends(verify_admin)):
+async def trigger_price_check(request: Request, _: str = Depends(verify_admin)):
     """Manually trigger price drop check + notifications."""
+    log.warning("admin_action", endpoint=request.url.path,
+                client_ip=request.client.host if request.client else "unknown")
     import asyncio
     from core.scheduler import _run_price_check
     asyncio.create_task(_run_price_check())

@@ -70,7 +70,7 @@ async def send_price_drop_notification(
         return False
 
     s = get_settings()
-    if not s.firebase_project_id or s.firebase_service_account_json == "{}":
+    if not s.firebase_configured:
         log.warning("firebase_not_configured")
         return False
 
@@ -97,7 +97,7 @@ async def send_price_drop_notification(
                     "priority": "high",
                     "notification": {
                         "icon":          "ic_notification",
-                        "color":         "#C9A84C",
+                        "color":         get_settings().notification_icon_color,
                         "channel_id":    "price_drops",
                         "click_action":  "OPEN_COMPARE_SCREEN",
                     },

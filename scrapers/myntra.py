@@ -1,24 +1,24 @@
 """
 scrapers/myntra.py
 ──────────────────
-Myntra product scraper using Scrapling + Playwright.
-Myntra is a JS-heavy SPA — we need a headless browser.
+Myntra product scraper using Scrapling 0.4.5 + Playwright (StealthyFetcher).
 
-Affiliate links are generated via CueLink (build_myntra_affiliate_url).
-Category URL format: https://www.myntra.com/{category}?rawQuery={category}&sort=popularity
+Scrapling 0.4.5 API:
+  StealthyFetcher.fetch(url, wait_selector=".cls", timeout=20000)
+  css_first → use .css(sel).first
+  .html     → full page HTML string
 """
 from __future__ import annotations
-import asyncio
-from scrapling.auto import Fetcher
+import re
+from scrapling.fetchers.stealth_chrome import StealthyFetcher
+
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
-from core.config import get_settings
 from scrapers.base import BaseScraper
 from integrations.affiliate import build_myntra_affiliate_url
 
 MYNTRA_BASE = "https://www.myntra.com"
 
-# Map our category names to Myntra URL slugs
 CATEGORY_MAP = {
     "smartphones":  "mobile-phones",
     "laptops":      "laptops",
@@ -38,96 +38,86 @@ CATEGORY_MAP = {
 class MyntraScraper(BaseScraper):
     platform = Platform.MYNTRA
 
-    async def scrape_category(self, category: str) -> list[ScrapedProduct]:
+    def scrape_category(self, category: str) -> list[ScrapedProduct]:
         slug = CATEGORY_MAP.get(category, category)
         url  = f"{MYNTRA_BASE}/{slug}?rawQuery={slug}&sort=popularity&rows=40"
-
         self._log.info("scraping", platform="myntra", url=url)
 
         try:
-            # Scrapling Fetcher with stealth mode — bypasses basic bot detection
-            fetcher = Fetcher(auto_match=True, stealth=True)
-            page = fetcher.get(
+            page = StealthyFetcher.fetch(
                 url,
-                stealthy_headers=True,
+                headless=True,
                 wait_selector=".product-base",
-                wait_timeout=15000,   # 15 seconds max
+                timeout=20000,
+                disable_resources=True,
             )
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "too many" in err_str:
+            err = str(e).lower()
+            if "429" in err or "too many" in err:
                 raise ScraperRateLimited("myntra", "429 rate limit")
-            if "timeout" in err_str:
+            if "timeout" in err:
                 raise ScraperError("myntra", f"page timeout: {e}")
             raise ScraperError("myntra", str(e))
 
-        # Check for CAPTCHA / access denied
-        if page.css(".error-404") or "access denied" in page.html.lower():
+        html_lower = page.html.lower() if page.html else ""
+        if "access denied" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("myntra", "access denied or CAPTCHA")
 
         items = page.css(".product-base")
         if not items:
-            raise ScraperStructureChanged("myntra", ".product-base selector returned nothing")
+            raise ScraperStructureChanged("myntra", ".product-base found nothing")
 
         products: list[ScrapedProduct] = []
         for item in items:
             try:
-                product = self._parse_product(item, category)
-                if product:
-                    products.append(product)
-            except Exception as e:
-                self._log.debug("parse_skip", reason=str(e))
+                p = self._parse(item, category)
+                if p:
+                    products.append(p)
+            except Exception:
                 continue
-
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
-        # Product ID
-        product_id = (
-            item.css_first(".product-productMetaInfo")
-            and item.css_first(".product-productMetaInfo").attrib.get("data-id", "")
-            or item.css_first("a")
-            and item.css_first("a").attrib.get("href", "").split("/")[-1].split("?")[0]
-        )
-        if not product_id:
+    def _parse(self, item, category: str) -> ScrapedProduct | None:
+        # Product ID — from data attribute or href
+        pid = ""
+        meta_el = self.css_first(item, ".product-productMetaInfo")
+        if meta_el:
+            pid = meta_el.attrib.get("data-id", "")
+        if not pid:
+            a_el = self.css_first(item, "a")
+            if a_el:
+                href = a_el.attrib.get("href", "")
+                pid = href.rstrip("/").split("/")[-1].split("?")[0]
+        if not pid:
             return None
 
-        # Title + Brand
-        brand_el = item.css_first(".product-brand")
-        title_el = item.css_first(".product-product")
+        brand_el = self.css_first(item, ".product-brand")
+        title_el = self.css_first(item, ".product-product")
         brand = self.clean_title(brand_el.text if brand_el else "")
         title = self.clean_title(title_el.text if title_el else "")
         if not title:
             return None
         full_title = f"{brand} {title}".strip()
 
-        # Prices
-        deal_el = item.css_first(".product-discountedPrice")
-        orig_el = item.css_first(".product-strike")
+        deal_el = self.css_first(item, ".product-discountedPrice")
+        orig_el = self.css_first(item, ".product-strike")
         deal_price = self.extract_price(deal_el.text if deal_el else "")
         orig_price = self.extract_price(orig_el.text if orig_el else "")
-
         if deal_price <= 0:
             return None
 
-        # Discount
-        disc_el = item.css_first(".product-discountPercentage")
+        disc_el  = self.css_first(item, ".product-discountPercentage")
         discount = self.extract_int(disc_el.text if disc_el else "")
 
-        # Image
-        img_el = item.css_first("img.img-responsive")
+        img_el    = self.css_first(item, "img.img-responsive") or self.css_first(item, "img")
         image_url = img_el.attrib.get("src", "") if img_el else ""
 
-        # Product URL
-        link_el = item.css_first("a")
-        raw_url  = link_el.attrib.get("href", "") if link_el else ""
-        product_url = self.safe_url(raw_url, MYNTRA_BASE)
-
-        # Raw product URL — CueLink Android SDK affiliates client-side
-        affiliate_url = build_myntra_affiliate_url(product_url)
+        link_el   = self.css_first(item, "a")
+        raw_url   = link_el.attrib.get("href", "") if link_el else ""
+        prod_url  = self.safe_url(raw_url, MYNTRA_BASE)
 
         return ScrapedProduct(
-            external_id    = str(product_id),
+            external_id    = str(pid),
             platform       = Platform.MYNTRA,
             title          = full_title,
             brand          = brand,
@@ -135,6 +125,6 @@ class MyntraScraper(BaseScraper):
             current_price  = deal_price,
             original_price = orig_price or deal_price,
             discount_pct   = discount,
-            affiliate_url  = affiliate_url,
+            affiliate_url  = build_myntra_affiliate_url(prod_url),
             category       = category,
         )

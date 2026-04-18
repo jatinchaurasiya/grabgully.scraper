@@ -7,10 +7,11 @@ All responses are cached — DB is never hammered on every app open.
 from __future__ import annotations
 from typing import Optional
 
-from fastapi import APIRouter, Query, Depends, HTTPException
+from fastapi import APIRouter, Query, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.logger import get_logger
+from core.limiter import limiter
 from services.db import get_db
 from services.cache import get_cache, TTL_DEALS
 
@@ -34,7 +35,9 @@ class DealOut(BaseModel):
 
 
 @router.get("", response_model=list[DealOut])
+@limiter.limit("60/minute")
 async def get_deals(
+    request:      Request,
     category:    Optional[str] = Query(None, description="Filter by category"),
     platform:    Optional[str] = Query(None, description="Filter by platform"),
     min_discount: int          = Query(0,    ge=0, le=100),
@@ -45,7 +48,13 @@ async def get_deals(
     Main deal feed. Supports category/platform filtering, pagination.
     Android app LazyVerticalStaggeredGrid calls this with page= param.
     """
-    cache_key = f"deals:{category}:{platform}:{min_discount}:{page}:{limit}"
+    # Normalise to lowercase + cap limit at 20 so that near-identical
+    # requests (e.g. category="Electronics" vs "electronics", limit=19 vs 20)
+    # collapse to the same cache bucket instead of creating separate entries.
+    _cat      = (category or "all").lower().strip()
+    _plt      = (platform  or "all").lower().strip()
+    _lim      = min(limit, 20)
+    cache_key = f"deals:{_cat}:{_plt}:{min_discount}:{page}:{_lim}"
     cache = get_cache()
     cached = await cache.get(cache_key)
     if cached:

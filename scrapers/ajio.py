@@ -1,12 +1,11 @@
 """
 scrapers/ajio.py
 ────────────────
-Ajio scraper — Reliance's fashion platform.
-Uses Scrapling + Playwright for JS-rendered pages.
-Affiliate links are generated via CueLink (build_ajio_affiliate_url).
+Ajio scraper — Scrapling 0.4.5 + StealthyFetcher.
 """
 from __future__ import annotations
-from scrapling.auto import Fetcher
+from scrapling.fetchers.stealth_chrome import StealthyFetcher
+
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
 from scrapers.base import BaseScraper
@@ -30,27 +29,26 @@ CATEGORY_MAP = {
 class AjioScraper(BaseScraper):
     platform = Platform.AJIO
 
-    async def scrape_category(self, category: str) -> list[ScrapedProduct]:
+    def scrape_category(self, category: str) -> list[ScrapedProduct]:
         slug = CATEGORY_MAP.get(category, category)
         url  = f"{AJIO_BASE}/s/{slug}?rows=40&start=0&sortBy=newn"
-
         self._log.info("scraping", platform="ajio", url=url)
 
         try:
-            fetcher = Fetcher(auto_match=True, stealth=True)
-            page = fetcher.get(
+            page = StealthyFetcher.fetch(
                 url,
-                stealthy_headers=True,
+                headless=True,
                 wait_selector=".item",
-                wait_timeout=20000,
+                timeout=20000,
+                disable_resources=True,
             )
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str:
+            err = str(e).lower()
+            if "429" in err:
                 raise ScraperRateLimited("ajio", "rate limited")
             raise ScraperError("ajio", str(e))
 
-        if "access denied" in page.html.lower():
+        if "access denied" in (page.html or "").lower():
             raise ScraperRateLimited("ajio", "access denied")
 
         items = page.css(".item")
@@ -59,50 +57,47 @@ class AjioScraper(BaseScraper):
             if not items:
                 raise ScraperStructureChanged("ajio", ".item selector returned nothing")
 
-        products = []
+        products: list[ScrapedProduct] = []
         for item in items:
             try:
-                p = self._parse_product(item, category)
+                p = self._parse(item, category)
                 if p:
                     products.append(p)
             except Exception:
                 continue
-
         return products
 
-    def _parse_product(self, item, category: str) -> ScrapedProduct | None:
-        brand_el  = item.css_first(".brand")
-        title_el  = item.css_first(".nameCls") or item.css_first("h2")
+    def _parse(self, item, category: str) -> ScrapedProduct | None:
+        brand_el  = self.css_first(item, ".brand")
+        title_el  = self.css_first(item, ".nameCls") or self.css_first(item, "h2")
         brand     = self.clean_title(brand_el.text if brand_el else "")
         title_str = self.clean_title(title_el.text if title_el else "")
         full      = f"{brand} {title_str}".strip()
         if not full:
             return None
 
-        # Price
-        sale_el  = item.css_first(".price .sale") or item.css_first(".price strong")
-        orig_el  = item.css_first(".price .orginal-price")
+        sale_el    = self.css_first(item, ".price .sale") or self.css_first(item, ".price strong")
+        orig_el    = self.css_first(item, ".price .orginal-price")
         sale_price = self.extract_price(sale_el.text if sale_el else "")
         orig_price = self.extract_price(orig_el.text if orig_el else "")
         if sale_price <= 0:
             return None
 
-        disc_el  = item.css_first(".discount")
+        disc_el  = self.css_first(item, ".discount")
         discount = self.extract_int(disc_el.text if disc_el else "")
 
-        img_el   = item.css_first("img")
+        img_el    = self.css_first(item, "img")
         image_url = img_el.attrib.get("src", "") if img_el else ""
 
-        link_el  = item.css_first("a")
-        href     = link_el.attrib.get("href", "") if link_el else ""
-        url      = self.safe_url(href, AJIO_BASE)
+        link_el   = self.css_first(item, "a")
+        href      = link_el.attrib.get("href", "") if link_el else ""
+        prod_url  = self.safe_url(href, AJIO_BASE)
 
-        # Ajio product IDs are in the URL slug (last segment before query)
-        slug_part  = href.rstrip("/").split("/")[-1].split("?")[0]
-        product_id = slug_part or (brand + title_str)[:32]
+        slug_part = href.rstrip("/").split("/")[-1].split("?")[0]
+        prod_id   = slug_part or (brand + title_str)[:32]
 
         return ScrapedProduct(
-            external_id    = product_id,
+            external_id    = prod_id,
             platform       = Platform.AJIO,
             title          = full,
             brand          = brand,
@@ -110,6 +105,6 @@ class AjioScraper(BaseScraper):
             current_price  = sale_price,
             original_price = orig_price or sale_price,
             discount_pct   = discount,
-            affiliate_url  = build_ajio_affiliate_url(url),  # raw URL — CueLink SDK affiliates
+            affiliate_url  = build_ajio_affiliate_url(prod_url),
             category       = category,
         )

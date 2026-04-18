@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 
 from core.logger import get_logger
-from services.db import get_db
+from services.db import get_db, award_xp
 
 router = APIRouter(tags=["watchlist"])
 log    = get_logger("api.watchlist")
@@ -20,13 +20,24 @@ log    = get_logger("api.watchlist")
 # ── Auth dependency ───────────────────────────────────────────────────────────
 
 async def require_user(authorization: Optional[str] = Header(None)) -> str:
-    """Extract and validate user_id from Supabase JWT. Raises 401 if missing."""
+    """
+    Extract and validate user_id from Supabase JWT.
+    Verifies HS256 signature using SUPABASE_JWT_SECRET.
+    Raises 401 if token is missing, invalid, or forged.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Authentication required")
     token = authorization.removeprefix("Bearer ").strip()
     try:
         from jose import jwt
-        payload = jwt.decode(token, options={"verify_signature": False})
+        from core.config import get_settings
+        s = get_settings()
+        payload = jwt.decode(
+            token,
+            s.supabase_jwt_secret,
+            algorithms=["HS256"],
+            options={"verify_aud": False},  # Supabase uses aud="authenticated"
+        )
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(401, "Invalid token")
@@ -59,6 +70,10 @@ class WatchlistItem(BaseModel):
 
 class SetAlertRequest(BaseModel):
     target_price: float
+
+
+class UpdateFcmTokenRequest(BaseModel):
+    fcm_token: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -126,7 +141,7 @@ async def add_to_watchlist(
         .execute()
     )
     if (count_res.count or 0) >= 50:
-        raise HTTPException(403, "Watchlist limit reached (50). Upgrade to Pro for unlimited.")
+        raise HTTPException(403, "Watchlist limit reached. You can track up to 50 products.")
 
     try:
         row = {
@@ -138,7 +153,7 @@ async def add_to_watchlist(
         db.table("watchlist").insert(row).execute()
 
         # Award XP for adding to watchlist
-        await _award_xp(user_id, xp=5)
+        await award_xp(user_id=user_id, action_type="watchlist_add", xp=5)
 
         return {"message": "Watchlist mein add ho gaya!"}
     except Exception as e:
@@ -148,15 +163,21 @@ async def add_to_watchlist(
 
 @router.delete("/{item_id}")
 async def remove_from_watchlist(item_id: str, user_id: str = Depends(require_user)):
-    """Remove a product from the user's watchlist."""
+    """Remove a product from the user's watchlist. Returns 404 if not found."""
     db = get_db()
     try:
-        db.table("watchlist") \
-          .delete() \
-          .eq("id", item_id) \
-          .eq("user_id", user_id) \
-          .execute()
+        res = (
+            db.table("watchlist")
+            .delete()
+            .eq("id", item_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not res.data:
+            raise HTTPException(404, "Item not found in your watchlist")
         return {"message": "Watchlist se hata diya"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, "Failed to remove from watchlist")
 
@@ -180,16 +201,25 @@ async def set_price_alert(
         raise HTTPException(500, "Failed to set alert")
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-async def _award_xp(user_id: str, xp: int) -> None:
+@router.patch("/fcm-token", status_code=200)
+async def update_fcm_token(
+    body:    UpdateFcmTokenRequest,
+    user_id: str = Depends(require_user),
+):
+    """
+    Update the user's FCM device token.
+    The Android app must call this whenever FirebaseMessagingService.onNewToken() fires.
+    Without this, push notifications fail silently after app reinstalls or token rotations.
+    """
     db = get_db()
     try:
-        db.table("xp_events").insert({
-            "user_id":     user_id,
-            "action_type": "watchlist_add",
-            "xp_amount":   xp,
-        }).execute()
-        db.rpc("increment_user_xp", {"p_user_id": user_id, "p_xp": xp}).execute()
-    except Exception:
-        pass
+        db.table("users") \
+          .update({"fcm_token": body.fcm_token, "updated_at": "now()"}) \
+          .eq("id", user_id) \
+          .execute()
+        return {"message": "FCM token updated"}
+    except Exception as e:
+        log.error("fcm_token_update_failed", user_id=user_id, error=str(e))
+        raise HTTPException(500, "Failed to update FCM token")
+
+

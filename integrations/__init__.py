@@ -1,4 +1,7 @@
-from integrations.amazon   import get_amazon
-from integrations.flipkart import get_flipkart
+from integrations.amazon import get_amazon
 
-__all__ = ["get_amazon", "get_flipkart"]
+# NOTE: integrations/flipkart.py is a deprecated stub.
+# Flipkart data now comes from scrapers/flipkart.py (Scrapling).
+# Affiliate conversion is handled by CueLink Android SDK.
+
+__all__ = ["get_amazon"]
