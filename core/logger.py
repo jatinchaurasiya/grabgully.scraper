@@ -166,6 +166,10 @@ def setup_logging() -> None:
         cache_logger_on_first_use=True,
     )
 
+    logging.root.setLevel(
+        logging.getLevelName(settings.log_level.upper())
+    )
+
     # ── Stdlib logging (for uvicorn, APScheduler, httpx, Playwright) ──────
     # format="%(message)s" prevents double-formatting: structlog already
     # renders the full line; stdlib should just emit it as-is.

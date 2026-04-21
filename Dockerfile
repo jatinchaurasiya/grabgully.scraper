@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 libgbm1 libpango-1.0-0 libgtk-3-0 \
     libasound2 libxss1 libxcomposite1 libxdamage1 \
     fonts-liberation libappindicator3-1 xdg-utils \
+    libcurl4-openssl-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pip packages from builder
