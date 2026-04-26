@@ -37,6 +37,7 @@ WORKDIR /app
 
 # Install Playwright browser binary (Python package already in /usr/local from builder)
 RUN playwright install chromium --with-deps
+RUN patchright install chromium
 
 # Copy source code
 COPY . .
