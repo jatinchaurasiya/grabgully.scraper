@@ -1,11 +1,11 @@
 """
 scrapers/snapdeal.py
 ────────────────────
-Snapdeal scraper — Scrapling 0.4.5 + StealthyFetcher.
+Snapdeal scraper — Scrapling 0.4.5 + DynamicFetcher.
 Snapdeal has some server-side rendering but still needs a browser for JS.
 """
 from __future__ import annotations
-from scrapling.fetchers.stealth_chrome import StealthyFetcher
+from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
@@ -39,7 +39,7 @@ class SnapdealScraper(BaseScraper):
         self._log.info("scraping", platform="snapdeal", url=url)
 
         try:
-            page = StealthyFetcher.fetch(
+            page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 wait_selector=".product-tuple-listing",

@@ -1,16 +1,16 @@
 """
 scrapers/myntra.py
 ──────────────────
-Myntra product scraper using Scrapling 0.4.5 + Playwright (StealthyFetcher).
+Myntra product scraper using Scrapling 0.4.5 + Playwright (DynamicFetcher).
 
 Scrapling 0.4.5 API:
-  StealthyFetcher.fetch(url, wait_selector=".cls", timeout=20000)
+  DynamicFetcher.fetch(url, wait_selector=".cls", timeout=20000)
   css_first → use .css(sel).first
   .html     → full page HTML string
 """
 from __future__ import annotations
 import re
-from scrapling.fetchers.stealth_chrome import StealthyFetcher
+from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
@@ -44,7 +44,7 @@ class MyntraScraper(BaseScraper):
         self._log.info("scraping", platform="myntra", url=url)
 
         try:
-            page = StealthyFetcher.fetch(
+            page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 wait_selector=".product-base",

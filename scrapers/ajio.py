@@ -1,10 +1,10 @@
 """
 scrapers/ajio.py
 ────────────────
-Ajio scraper — Scrapling 0.4.5 + StealthyFetcher.
+Ajio scraper — Scrapling 0.4.5 + DynamicFetcher.
 """
 from __future__ import annotations
-from scrapling.fetchers.stealth_chrome import StealthyFetcher
+from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
@@ -35,7 +35,7 @@ class AjioScraper(BaseScraper):
         self._log.info("scraping", platform="ajio", url=url)
 
         try:
-            page = StealthyFetcher.fetch(
+            page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 wait_selector=".item",

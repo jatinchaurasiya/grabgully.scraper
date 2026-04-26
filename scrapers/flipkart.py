@@ -1,15 +1,15 @@
 """
 scrapers/flipkart.py
 ─────────────────────
-Flipkart product scraper — Scrapling 0.4.5 + StealthyFetcher.
+Flipkart product scraper — Scrapling 0.4.5 + DynamicFetcher.
 
-Flipkart is a React SPA. StealthyFetcher handles JS rendering and
+Flipkart is a React SPA. DynamicFetcher handles JS rendering and
 bypasses basic bot-detection. Affiliate links are raw product URLs —
 the CueLink Android SDK converts them client-side.
 """
 from __future__ import annotations
 import re
-from scrapling.fetchers.stealth_chrome import StealthyFetcher
+from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
@@ -43,7 +43,7 @@ class FlipkartScraper(BaseScraper):
         self._log.info("scraping", platform="flipkart", url=url)
 
         try:
-            page = StealthyFetcher.fetch(
+            page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 wait_selector="[data-id]",

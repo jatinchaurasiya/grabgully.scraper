@@ -1,11 +1,11 @@
 """
 scrapers/meesho.py
 ──────────────────
-Meesho scraper — Scrapling 0.4.5 + StealthyFetcher.
+Meesho scraper — Scrapling 0.4.5 + DynamicFetcher.
 Meesho is React-based; headless browser needed.
 """
 from __future__ import annotations
-from scrapling.fetchers.stealth_chrome import StealthyFetcher
+from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
@@ -37,7 +37,7 @@ class MeeshoScraper(BaseScraper):
         self._log.info("scraping", platform="meesho", url=url)
 
         try:
-            page = StealthyFetcher.fetch(
+            page = DynamicFetcher.fetch(
                 url,
                 headless=True,
                 wait_selector="[data-testid='product-card']",
