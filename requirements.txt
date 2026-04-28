@@ -16,7 +16,7 @@ supabase==2.5.0
 # Cache uses httpx (listed above under scraping) to call Upstash REST API directly.
 
 # ─── SCHEDULING ───────────────────────────────────────────────────────────────
-apscheduler==3.10.4The real cause: requirements.txt says scrapling==0.4.5 (core only). But the scrapers use DynamicFetcher which lives in scrapling[fetchers] — a separate extras group. That group has 9 dependencies. You've been manually adding them one by one with wrong version numbers. The fix is one line that installs all 9 correctly.
+apscheduler==3.10.4
 
 # ─── AMAZON CREATOR API ───────────────────────────────────────────────────────
 # Uses httpx (already listed above) + python-jose for JWT.
