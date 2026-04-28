@@ -6,10 +6,7 @@ pydantic-settings==2.3.0
 
 # ─── SCRAPING ─────────────────────────────────────────────────────────────────
 # Scrapling 0.4.5 is installed in venv — pin requirements to match
-scrapling==0.4.5
-playwright==1.49.1
-patchright==1.49.1
-curl_cffi==0.7.3
+scrapling[fetchers]==0.4.5
 httpx==0.27.0
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
@@ -19,7 +16,7 @@ supabase==2.5.0
 # Cache uses httpx (listed above under scraping) to call Upstash REST API directly.
 
 # ─── SCHEDULING ───────────────────────────────────────────────────────────────
-apscheduler==3.10.4
+apscheduler==3.10.4The real cause: requirements.txt says scrapling==0.4.5 (core only). But the scrapers use DynamicFetcher which lives in scrapling[fetchers] — a separate extras group. That group has 9 dependencies. You've been manually adding them one by one with wrong version numbers. The fix is one line that installs all 9 correctly.
 
 # ─── AMAZON CREATOR API ───────────────────────────────────────────────────────
 # Uses httpx (already listed above) + python-jose for JWT.
