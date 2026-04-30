@@ -46,9 +46,10 @@ class FlipkartScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector="[data-id]",
-                timeout=25000,         # Flipkart can be slow
+                wait_selector="[data-id], ._1AtVbE, ._4ddWXP",
+                timeout=45000,         # Flipkart renders late
                 disable_resources=True,
+                network_idle=True,
             )
         except Exception as e:
             err = str(e).lower()
@@ -65,12 +66,14 @@ class FlipkartScraper(BaseScraper):
         # Flipkart product cards have [data-id] attribute
         cards = page.css("[data-id]")
         if not cards:
-            cards = page.css("div._1AtVbE")
-            if not cards:
-                raise ScraperStructureChanged(
-                    "flipkart",
-                    "[data-id] selector returned nothing — Flipkart layout may have changed",
-                )
+            cards = page.css("._1AtVbE")
+        if not cards:
+            cards = page.css("._4ddWXP")
+        if not cards:
+            raise ScraperStructureChanged(
+                "flipkart",
+                "[data-id] selector returned nothing — Flipkart layout may have changed",
+            )
 
         products: list[ScrapedProduct] = []
         for card in cards:

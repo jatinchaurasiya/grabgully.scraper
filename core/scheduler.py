@@ -26,14 +26,9 @@ log = get_logger("scheduler")
 SCRAPE_CATEGORIES = [
     "smartphones",
     "earphones",
-    "laptops",
     "kurta",
     "sneakers",
     "jeans",
-    "bags",
-    "watches",
-    "skincare",
-    "tshirts",
 ]
 
 # Amazon Creator API search keywords

@@ -20,10 +20,6 @@ from integrations.affiliate import build_myntra_affiliate_url
 MYNTRA_BASE = "https://www.myntra.com"
 
 CATEGORY_MAP = {
-    "smartphones":  "mobile-phones",
-    "laptops":      "laptops",
-    "earphones":    "earphones",
-    "headphones":   "headphones",
     "kurta":        "kurtas",
     "jeans":        "jeans",
     "sneakers":     "sports-shoes",
@@ -32,6 +28,7 @@ CATEGORY_MAP = {
     "watches":      "watches",
     "bags":         "bags-wallets-belts",
     "skincare":     "skin-care",
+    "dresses":      "dresses",
 }
 
 
@@ -47,9 +44,10 @@ class MyntraScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector=".product-base",
-                timeout=20000,
+                wait_selector=".product-base, .results-base .product-base",
+                timeout=40000,
                 disable_resources=True,
+                network_idle=True,
             )
         except Exception as e:
             err = str(e).lower()

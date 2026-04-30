@@ -43,8 +43,15 @@ class SnapdealScraper(BaseScraper):
                 url,
                 headless=True,
                 wait_selector=".product-tuple-listing",
-                timeout=20000,
+                timeout=40000,
                 disable_resources=True,
+                network_idle=True,
+                extra_headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-IN,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Referer": "https://www.google.com/",
+                },
             )
         except Exception as e:
             err = str(e).lower()

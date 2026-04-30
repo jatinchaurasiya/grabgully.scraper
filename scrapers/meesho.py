@@ -40,9 +40,10 @@ class MeeshoScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector="[data-testid='product-card']",
-                timeout=20000,
+                wait_selector="[class*='ProductCard'], [data-testid='product-card'], [class*='product-card']",
+                timeout=45000,
                 disable_resources=True,
+                network_idle=True,
             )
         except Exception as e:
             err = str(e).lower()
@@ -54,11 +55,13 @@ class MeeshoScraper(BaseScraper):
         if "robot" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("meesho", "CAPTCHA detected")
 
-        items = page.css("[data-testid='product-card']")
+        items = (
+            page.css("[class*='ProductCard']")
+            or page.css("[data-testid='product-card']")
+            or page.css("[class*='NewProductCard']")
+        )
         if not items:
-            items = page.css(".NewProductCard__CardStyled")
-            if not items:
-                raise ScraperStructureChanged("meesho", "product card selector not found")
+            raise ScraperStructureChanged("meesho", "product card selector not found")
 
         products: list[ScrapedProduct] = []
         for item in items:
