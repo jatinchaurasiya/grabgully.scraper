@@ -59,7 +59,7 @@ class FlipkartScraper(BaseScraper):
                 raise ScraperError("flipkart", f"page timeout: {e}")
             raise ScraperError("flipkart", str(e))
 
-        html_lower = page.html.lower() if page.html else ""
+        html_lower = str(page).lower()
         if any(kw in html_lower for kw in ("captcha", "access denied", "robot verification")):
             raise ScraperRateLimited("flipkart", "access denied / CAPTCHA")
 

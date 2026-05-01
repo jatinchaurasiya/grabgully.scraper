@@ -54,7 +54,7 @@ class AjioScraper(BaseScraper):
                 raise ScraperRateLimited("ajio", "rate limited")
             raise ScraperError("ajio", str(e))
 
-        if "access denied" in (page.html or "").lower():
+        if "access denied" in str(page).lower():
             raise ScraperRateLimited("ajio", "access denied")
 
         items = page.css(".item")

@@ -57,7 +57,7 @@ class MyntraScraper(BaseScraper):
                 raise ScraperError("myntra", f"page timeout: {e}")
             raise ScraperError("myntra", str(e))
 
-        html_lower = page.html.lower() if page.html else ""
+        html_lower = str(page).lower()
         if "access denied" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("myntra", "access denied or CAPTCHA")
 

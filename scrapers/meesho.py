@@ -51,7 +51,7 @@ class MeeshoScraper(BaseScraper):
                 raise ScraperRateLimited("meesho", "rate limited")
             raise ScraperError("meesho", str(e))
 
-        html_lower = page.html.lower() if page.html else ""
+        html_lower = str(page).lower()
         if "robot" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("meesho", "CAPTCHA detected")
 
