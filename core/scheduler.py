@@ -153,14 +153,11 @@ async def _run_scrapers() -> None:
             log.error("scraper_failed", platform=scraper.platform.value, error=str(e))
             return 0
 
-    # Run all scrapers concurrently — each gets its own Playwright thread
-    # (backed by the 5-worker ThreadPoolExecutor in scrapers/base.py).
-    # return_exceptions=False: exceptions are caught inside run_one, so
-    # gather itself will never raise.
-    results = await asyncio.gather(
-        *[run_one(s) for s in scrapers],
-        return_exceptions=False,
-    )
+    # Run all scrapers sequentially to prevent OOM crashes on Railway (512MB limit)
+    results = []
+    for s in scrapers:
+        result = await run_one(s)
+        results.append(result)
     log.info("all_scrapers_done", total_products=sum(results))
 
 
