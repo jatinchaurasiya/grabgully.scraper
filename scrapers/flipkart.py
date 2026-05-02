@@ -8,34 +8,32 @@ bypasses basic bot-detection. Affiliate links are raw product URLs —
 the CueLink Android SDK converts them client-side.
 """
 from __future__ import annotations
+import asyncio
 import re
 from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
-from scrapers.base import BaseScraper
+from scrapers.base import BaseScraper, BROWSER_ARGS, BROWSER_VIEWPORT
 from integrations.affiliate import build_flipkart_affiliate_url
 
 FLIPKART_BASE = "https://www.flipkart.com"
 
 CATEGORY_MAP: dict[str, str] = {
-    "smartphones":  "mobiles/pr?sid=tyy%2C4io&sort=popularity",
-    "laptops":      "computers/laptops/pr?sid=6bo%2Cb5g&sort=popularity",
     "earphones":    "audio/earphones-headphones/pr?sid=0pm%2Ckap&sort=popularity",
-    "headphones":   "audio/headphones/pr?sid=0pm%2Ckap&sort=popularity",
-    "smartwatches": "wearable-smart-devices/smartwatches/pr?sid=ajy%2Cbycu&sort=popularity",
-    "televisions":  "televisions/pr?sid=ckf%2Cczl&sort=popularity",
-    "tshirts":      "clothing-and-accessories/topwear/tshirts/pr?sid=clo%2Cash%2Cahz&sort=popularity",
-    "jeans":        "clothing-and-accessories/bottomwear/jeans/pr?sid=clo%2Cank%2Cbkm&sort=popularity",
+    "kurta":        "clothing-and-accessories/topwear/kurtas/pr?sid=clo%2Cash%2C0pr&sort=popularity",
     "sneakers":     "footwear/sports-shoes/pr?sid=osp%2Ca1k&sort=popularity",
-    "bags":         "bags-wallets-luggage/bags/pr?sid=reh%2Cdjn&sort=popularity",
-    "skincare":     "beauty/skincare/pr?sid=sl0%2C01k&sort=popularity",
-    "watches":      "jewellery-and-watches/watches/pr?sid=mcn%2C6zu&sort=popularity",
+    "jeans":        "clothing-and-accessories/bottomwear/jeans/pr?sid=clo%2Cank%2Cbkm&sort=popularity",
 }
 
 
 class FlipkartScraper(BaseScraper):
     platform = Platform.FLIPKART
+
+    async def run(self, categories: list[str]) -> list[ScrapedProduct]:  # type: ignore[override]
+        """Wait for RAM to recover after previous scrapers, then delegate to base."""
+        await asyncio.sleep(60)
+        return await super().run(categories)
 
     def scrape_category(self, category: str) -> list[ScrapedProduct]:
         slug = CATEGORY_MAP.get(category, f"{category}?sort=popularity")
@@ -46,10 +44,12 @@ class FlipkartScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector="[data-id], ._1AtVbE, ._4ddWXP",
+                wait_selector="div._1AtVbE, div[class*='_1AtVbE'], ._4ddWXP",
                 timeout=45000,         # Flipkart renders late
                 disable_resources=True,
                 network_idle=True,
+                extra_args=BROWSER_ARGS,
+                viewport=BROWSER_VIEWPORT,
             )
         except Exception as e:
             err = str(e).lower()

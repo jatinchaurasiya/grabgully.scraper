@@ -9,7 +9,7 @@ from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
-from scrapers.base import BaseScraper
+from scrapers.base import BaseScraper, BROWSER_ARGS, BROWSER_VIEWPORT
 from integrations.affiliate import build_meesho_affiliate_url
 
 MEESHO_BASE = "https://meesho.com"
@@ -40,10 +40,12 @@ class MeeshoScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector="[class*='ProductCard'], [data-testid='product-card'], [class*='product-card']",
+                wait_selector="div[class*='sc-dkrFOg'], div[class*='sc-bcXHqe']",
                 timeout=45000,
                 disable_resources=True,
                 network_idle=True,
+                extra_args=BROWSER_ARGS,
+                viewport=BROWSER_VIEWPORT,
             )
         except Exception as e:
             err = str(e).lower()
@@ -56,9 +58,9 @@ class MeeshoScraper(BaseScraper):
             raise ScraperRateLimited("meesho", "CAPTCHA detected")
 
         items = (
-            page.css("[class*='ProductCard']")
-            or page.css("[data-testid='product-card']")
-            or page.css("[class*='NewProductCard']")
+            page.css("div[class*='sc-dkrFOg']")
+            or page.css("div[class*='sc-bcXHqe']")
+            or page.css("[data-testid*='product']")
         )
         if not items:
             raise ScraperStructureChanged("meesho", "product card selector not found")

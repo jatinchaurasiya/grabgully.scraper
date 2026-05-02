@@ -33,6 +33,21 @@ _executor = ThreadPoolExecutor(
     thread_name_prefix="scraper",
 )
 
+# ── Shared browser settings (memory optimisation for Railway 512 MB) ──────────
+# Pass these into every DynamicFetcher.fetch() call via **BROWSER_KWARGS.
+BROWSER_ARGS = [
+    "--disable-extensions",
+    "--disable-gpu",
+    "--no-zygote",
+    "--single-process",
+    "--disable-dev-shm-usage",
+    "--memory-pressure-off",
+]
+BROWSER_VIEWPORT = {"width": 800, "height": 600}
+# Usage in subclasses:
+#   from scrapers.base import BROWSER_ARGS, BROWSER_VIEWPORT
+#   DynamicFetcher.fetch(url, ..., extra_args=BROWSER_ARGS, viewport=BROWSER_VIEWPORT)
+
 
 class BaseScraper(ABC):
     """

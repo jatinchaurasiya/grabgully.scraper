@@ -14,21 +14,17 @@ from scrapling.fetchers.chrome import DynamicFetcher
 
 from core.exceptions import ScraperError, ScraperRateLimited, ScraperStructureChanged
 from core.models import Platform, ScrapedProduct
-from scrapers.base import BaseScraper
+from scrapers.base import BaseScraper, BROWSER_ARGS, BROWSER_VIEWPORT
 from integrations.affiliate import build_myntra_affiliate_url
 
 MYNTRA_BASE = "https://www.myntra.com"
 
 CATEGORY_MAP = {
-    "kurta":        "kurtas",
-    "jeans":        "jeans",
-    "sneakers":     "sports-shoes",
-    "tshirts":      "tshirts",
-    "saree":        "sarees",
-    "watches":      "watches",
-    "bags":         "bags-wallets-belts",
-    "skincare":     "skin-care",
-    "dresses":      "dresses",
+    "kurta":    "kurtas",
+    "jeans":    "jeans",
+    "sneakers": "sports-shoes",
+    "sarees":   "sarees",
+    "tops":     "tops",
 }
 
 
@@ -44,10 +40,12 @@ class MyntraScraper(BaseScraper):
             page = DynamicFetcher.fetch(
                 url,
                 headless=True,
-                wait_selector=".product-base, .results-base .product-base",
+                wait_selector="li.product-base",
                 timeout=40000,
                 disable_resources=True,
                 network_idle=True,
+                extra_args=BROWSER_ARGS,
+                viewport=BROWSER_VIEWPORT,
             )
         except Exception as e:
             err = str(e).lower()
@@ -61,9 +59,11 @@ class MyntraScraper(BaseScraper):
         if "access denied" in html_lower or "captcha" in html_lower:
             raise ScraperRateLimited("myntra", "access denied or CAPTCHA")
 
-        items = page.css(".product-base")
+        items = page.css("li.product-base")
         if not items:
-            raise ScraperStructureChanged("myntra", ".product-base found nothing")
+            items = page.css(".product-base")
+        if not items:
+            raise ScraperStructureChanged("myntra", "li.product-base / .product-base found nothing")
 
         products: list[ScrapedProduct] = []
         for item in items:

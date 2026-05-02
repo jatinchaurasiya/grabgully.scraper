@@ -4,7 +4,7 @@ core/scheduler.py
 APScheduler setup. All cron jobs in one place.
 
 Schedule (IST, 6 AM–11 PM only — saves Railway free credits):
-  Every 30 min, :00 & :30  → _run_scrapers()         Myntra/Meesho/Ajio/Snapdeal/Flipkart
+  Every 30 min, :00 & :30  → _run_scrapers()         Flipkart/Myntra/Meesho
   Every 30 min, :15 & :45  → _run_amazon_creator()   Amazon Creator API refresh
   Every 15 min              → _run_price_check()      FCM alerts for watchlist hits
   Daily at 2:00 AM          → _cleanup_old_data()     Delete price_history > 1 year
@@ -110,8 +110,7 @@ async def _run_scrapers() -> None:
     Includes Flipkart — now scraped directly, not via API.
     """
     from scrapers import (
-        MyntraScraper, MeeshoScraper, AjioScraper,
-        SnapdealScraper, FlipkartScraper,
+        FlipkartScraper, MyntraScraper, MeeshoScraper,
     )
     from services.db import upsert_listings_bulk, log_scraper_run
 
@@ -119,8 +118,6 @@ async def _run_scrapers() -> None:
         FlipkartScraper(),
         MyntraScraper(),
         MeeshoScraper(),
-        AjioScraper(),
-        SnapdealScraper(),
     ]
 
     async def run_one(scraper) -> int:
